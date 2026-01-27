@@ -7,6 +7,7 @@
 //! - Ordered: 1-50ms 完全有序
 
 use super::buffers::{MicroBatchBuffer, SlotBuffer};
+use super::event_queue::EventQueue;
 use super::types::*;
 use crate::core::{EventMetadata, now_micros};  // 导入高性能时钟
 use crate::instr::read_pubkey_fast;
@@ -27,6 +28,24 @@ use yellowstone_grpc_proto::prelude::*;
 
 static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
     Lazy::new(|| memmem::Finder::new(b"Program data: "));
+
+trait EventQueueWriter {
+    fn push_event(&self, event: DexEvent);
+}
+
+impl EventQueueWriter for ArrayQueue<DexEvent> {
+    #[inline(always)]
+    fn push_event(&self, event: DexEvent) {
+        let _ = self.push(event);
+    }
+}
+
+impl EventQueueWriter for EventQueue {
+    #[inline(always)]
+    fn push_event(&self, event: DexEvent) {
+        let _ = EventQueue::push(self, event);
+    }
+}
 
 // ==================== YellowstoneGrpc 客户端 ====================
 
@@ -84,6 +103,32 @@ impl YellowstoneGrpc {
         Ok(queue)
     }
 
+    /// 订阅 DEX 事件（非阻塞 Notify）
+    pub async fn subscribe_dex_events_notify(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+        event_type_filter: Option<EventTypeFilter>,
+    ) -> Result<Arc<EventQueue>, Box<dyn std::error::Error>> {
+        let queue = Arc::new(EventQueue::new(100_000));
+        let queue_clone = Arc::clone(&queue);
+        let self_clone = self.clone();
+
+        tokio::spawn(async move {
+            let mut delay = 1u64;
+            loop {
+                match self_clone.stream_events(&transaction_filters, &account_filters, &event_type_filter, &queue_clone).await {
+                    Ok(_) => delay = 1,
+                    Err(e) => println!("❌ gRPC error: {} - retry in {}s", e, delay),
+                }
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+                delay = (delay * 2).min(60);
+            }
+        });
+
+        Ok(queue)
+    }
+
     /// 动态更新订阅过滤器
     pub async fn update_subscription(
         &self,
@@ -106,12 +151,12 @@ impl YellowstoneGrpc {
 
     // ==================== 核心事件流处理 ====================
 
-    async fn stream_events(
+    async fn stream_events<Q: EventQueueWriter + Send + Sync>(
         &self,
         tx_filters: &[TransactionFilter],
         acc_filters: &[AccountFilter],
         event_filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        queue: &Arc<Q>,
     ) -> Result<(), String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         
@@ -201,12 +246,12 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn check_timeout(
+    fn check_timeout<Q: EventQueueWriter>(
         &self,
         mode: OrderMode,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        queue: &Arc<Q>,
         timeout_ms: u64,
         batch_us: u64,
         next_check: &mut Instant,
@@ -220,42 +265,42 @@ impl YellowstoneGrpc {
         match mode {
             OrderMode::Ordered => {
                 if slot_buf.should_timeout(timeout_ms) {
-                    for e in slot_buf.flush_all() { let _ = queue.push(e); }
+                    for e in slot_buf.flush_all() { queue.push_event(e); }
                 }
             }
             OrderMode::StreamingOrdered => {
                 if slot_buf.should_timeout(timeout_ms) {
-                    for e in slot_buf.flush_streaming_timeout() { let _ = queue.push(e); }
+                    for e in slot_buf.flush_streaming_timeout() { queue.push_event(e); }
                 }
             }
             OrderMode::MicroBatch => {
                 // Periodic flush for MicroBatch mode
                 let now_us = get_timestamp_us();
                 if micro_buf.should_flush(now_us, batch_us) {
-                    for e in micro_buf.flush() { let _ = queue.push(e); }
+                    for e in micro_buf.flush() { queue.push_event(e); }
                 }
             }
             OrderMode::Unordered => {}
         }
     }
 
-    fn flush_on_disconnect(&self, mode: OrderMode, buffer: &mut SlotBuffer, queue: &Arc<ArrayQueue<DexEvent>>) {
+    fn flush_on_disconnect<Q: EventQueueWriter>(&self, mode: OrderMode, buffer: &mut SlotBuffer, queue: &Arc<Q>) {
         if matches!(mode, OrderMode::Ordered | OrderMode::StreamingOrdered) {
             let events = match mode {
                 OrderMode::StreamingOrdered => buffer.flush_streaming_timeout(),
                 _ => buffer.flush_all(),
             };
-            for e in events { let _ = queue.push(e); }
+            for e in events { queue.push_event(e); }
         }
     }
 
     #[inline]
-    fn handle_update(
+    fn handle_update<Q: EventQueueWriter>(
         &self,
         update_msg: SubscribeUpdate,
         mode: OrderMode,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        queue: &Arc<Q>,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
         last_slot: &mut u64,
@@ -278,12 +323,12 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn handle_transaction(
+    fn handle_transaction<Q: EventQueueWriter>(
         &self,
         tx: SubscribeUpdateTransaction,
         mode: OrderMode,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        queue: &Arc<Q>,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
         last_slot: &mut u64,
@@ -296,12 +341,12 @@ impl YellowstoneGrpc {
         match mode {
             OrderMode::Unordered => {
                 for e in parse_transaction_core(&tx, grpc_us, Some(block_us), filter.as_ref()) {
-                    let _ = queue.push(e);
+                    queue.push_event(e);
                 }
             }
             OrderMode::Ordered => {
                 if slot > *last_slot && *last_slot > 0 {
-                    for e in slot_buf.flush_before(slot) { let _ = queue.push(e); }
+                    for e in slot_buf.flush_before(slot) { queue.push_event(e); }
                 }
                 *last_slot = slot;
                 for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
@@ -311,14 +356,14 @@ impl YellowstoneGrpc {
             OrderMode::StreamingOrdered => {
                 for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
                     for evt in slot_buf.push_streaming(slot, idx, e) {
-                        let _ = queue.push(evt);
+                        queue.push_event(evt);
                     }
                 }
             }
             OrderMode::MicroBatch => {
                 for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
                     if micro_buf.push(slot, idx, e, grpc_us, batch_us) {
-                        for evt in micro_buf.flush() { let _ = queue.push(evt); }
+                        for evt in micro_buf.flush() { queue.push_event(evt); }
                     }
                 }
             }
@@ -326,10 +371,10 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn handle_account(
+    fn handle_account<Q: EventQueueWriter>(
         acc: SubscribeUpdateAccount,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        queue: &Arc<Q>,
         grpc_us: i64,
         block_us: i64,
     ) {
@@ -350,7 +395,7 @@ impl YellowstoneGrpc {
             grpc_recv_us: grpc_us,
         };
         if let Some(e) = crate::accounts::parse_account_unified(&data, meta, filter.as_ref()) {
-            let _ = queue.push(e);
+            queue.push_event(e);
         }
     }
 }

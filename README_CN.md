@@ -186,6 +186,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### 非阻塞 Notify（无 busy wait）
+```rust
+// 订阅并获取带 Notify 的队列
+let queue = grpc.subscribe_dex_events_notify(
+    vec![transaction_filter],
+    vec![account_filter],
+    Some(event_filter),
+).await?;
+
+// 异步等待事件，无需自旋
+tokio::spawn(async move {
+    loop {
+        let event = queue.recv().await;
+        println!("{:?}", event);
+
+        // 唤醒后快速清空积压
+        while let Some(event) = queue.pop() {
+            println!("{:?}", event);
+        }
+    }
+});
+```
+
 ---
 
 ## 🏗️ 支持的协议

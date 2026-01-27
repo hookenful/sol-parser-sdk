@@ -186,6 +186,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Non-blocking Notify (no busy wait)
+```rust
+// Subscribe and get notify-enabled queue
+let queue = grpc.subscribe_dex_events_notify(
+    vec![transaction_filter],
+    vec![account_filter],
+    Some(event_filter),
+).await?;
+
+// Await events without spinning
+tokio::spawn(async move {
+    loop {
+        let event = queue.recv().await;
+        println!("{:?}", event);
+
+        // Drain backlog quickly after wake-up
+        while let Some(event) = queue.pop() {
+            println!("{:?}", event);
+        }
+    }
+});
+```
+
 ---
 
 ## 🏗️ Supported Protocols
