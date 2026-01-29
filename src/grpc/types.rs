@@ -223,6 +223,8 @@ pub enum EventType {
     BonkTrade,
     BonkPoolCreate,
     BonkMigrateAmm,
+    BonkInitializeV2,
+    BonkCreatePlatformConfig,
 
     // PumpFun events
     PumpFunTrade,    // All trade events (backward compatible)
@@ -442,6 +444,8 @@ impl EventTypeFilter {
                     EventType::BonkTrade
                         | EventType::BonkPoolCreate
                         | EventType::BonkMigrateAmm
+                        | EventType::BonkInitializeV2
+                        | EventType::BonkCreatePlatformConfig
                 )
             });
         }
@@ -452,6 +456,8 @@ impl EventTypeFilter {
                     EventType::BonkTrade
                         | EventType::BonkPoolCreate
                         | EventType::BonkMigrateAmm
+                        | EventType::BonkInitializeV2
+                        | EventType::BonkCreatePlatformConfig
                 )
             });
         }

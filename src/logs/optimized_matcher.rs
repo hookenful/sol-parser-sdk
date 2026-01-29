@@ -24,7 +24,7 @@ static RAYDIUM_CLMM_FINDER: Lazy<memmem::Finder> =
 static RAYDIUM_CPMM_FINDER: Lazy<memmem::Finder> =
     Lazy::new(|| memmem::Finder::new(b"CPMDWBwJDtYax9qKcQP3CtKz7tHjJsN3H8hGrYVD9mZD"));
 static BONK_FINDER: Lazy<memmem::Finder> =
-    Lazy::new(|| memmem::Finder::new(b"Bxby5A7E8xPDGGc3FyJw7m5eK5aqNVLU83H2zLTQDH1b"));
+    Lazy::new(|| memmem::Finder::new(b"LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"));
 static PROGRAM_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"Program"));
 static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
     Lazy::new(|| memmem::Finder::new(b"Program data: "));
@@ -43,9 +43,9 @@ pub mod program_id_strings {
     pub const PUMPFUN_SUCCESS: &str = "Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P success";
     pub const PUMPFUN_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 
-    pub const BONK_INVOKE: &str = "Program Bxby5A7E8xPDGGc3FyJw7m5eK5aqNVLU83H2zLTQDH1b invoke";
-    pub const BONK_SUCCESS: &str = "Program Bxby5A7E8xPDGGc3FyJw7m5eK5aqNVLU83H2zLTQDH1b success";
-    pub const BONK_ID: &str = "Bxby5A7E8xPDGGc3FyJw7m5eK5aqNVLU83H2zLTQDH1b";
+    pub const BONK_INVOKE: &str = "Program LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj invoke";
+    pub const BONK_SUCCESS: &str = "Program LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj success";
+    pub const BONK_ID: &str = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj";
 
     pub const RAYDIUM_CLMM_INVOKE: &str =
         "Program CAMMCzo5YL8w4VFF8KVHrK22GGUQpMdRBFSzKNT3t4ivN6 invoke";

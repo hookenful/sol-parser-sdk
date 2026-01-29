@@ -481,9 +481,43 @@ fn parse_logs(
             invokes.entry(pid).or_default().push((outer_idx, inner_idx));
         }
 
-        if PROGRAM_DATA_FINDER.find(log.as_bytes()).is_none() { continue; }
+        let has_program_data = PROGRAM_DATA_FINDER.find(log.as_bytes()).is_some();
+        let is_platform_params_log = crate::logs::raydium_launchpad::is_platform_params_log(log);
 
-        if let Some(mut e) = crate::logs::parse_log(log, sig, slot, tx_idx, block_us, grpc_us, filter, has_create) {
+        if !has_program_data && !is_platform_params_log {
+            continue;
+        }
+
+        let mut parsed = if has_program_data {
+            crate::logs::parse_log(log, sig, slot, tx_idx, block_us, grpc_us, filter, has_create)
+        } else {
+            if let Some(filter) = filter {
+                use crate::grpc::types::EventType;
+                if !filter.should_include(EventType::BonkCreatePlatformConfig) {
+                    None
+                } else {
+                    crate::logs::raydium_launchpad::parse_platform_config_log(
+                        log,
+                        sig,
+                        slot,
+                        tx_idx,
+                        block_us,
+                        grpc_us,
+                    )
+                }
+            } else {
+                crate::logs::raydium_launchpad::parse_platform_config_log(
+                    log,
+                    sig,
+                    slot,
+                    tx_idx,
+                    block_us,
+                    grpc_us,
+                )
+            }
+        };
+
+        if let Some(mut e) = parsed.take() {
             crate::core::account_dispatcher::fill_accounts_from_transaction_data(&mut e, meta, transaction, &invokes);
             crate::core::common_filler::fill_data(&mut e, meta, transaction, &invokes);
             result.push(e);

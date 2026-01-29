@@ -283,6 +283,16 @@ pub fn fill_accounts_with_owned_keys(
                 account_fillers::bonk::fill_pool_create_accounts(e, get);
             });
         }
+        DexEvent::BonkInitializeV2(e) => {
+            fill_event_accounts!(e, meta, transaction, program_invokes, &BONK_PROGRAM, |get: &AccountGetter<'_>| {
+                account_fillers::bonk::fill_initialize_v2_accounts(e, get);
+            });
+        }
+        DexEvent::BonkCreatePlatformConfig(e) => {
+            fill_event_accounts!(e, meta, transaction, program_invokes, &BONK_PROGRAM, |get: &AccountGetter<'_>| {
+                account_fillers::bonk::fill_create_platform_config_accounts(e, get);
+            });
+        }
 
         _ => {}
     }
@@ -505,6 +515,16 @@ pub fn fill_accounts_from_transaction_data(
         DexEvent::BonkPoolCreate(e) => {
             fill_event_accounts!(e, meta, transaction, program_invokes, BONK_PROGRAM_ID, |get: &AccountGetter<'_>| {
                 account_fillers::bonk::fill_pool_create_accounts(e, get);
+            });
+        }
+        DexEvent::BonkInitializeV2(e) => {
+            fill_event_accounts!(e, meta, transaction, program_invokes, BONK_PROGRAM_ID, |get: &AccountGetter<'_>| {
+                account_fillers::bonk::fill_initialize_v2_accounts(e, get);
+            });
+        }
+        DexEvent::BonkCreatePlatformConfig(e) => {
+            fill_event_accounts!(e, meta, transaction, program_invokes, BONK_PROGRAM_ID, |get: &AccountGetter<'_>| {
+                account_fillers::bonk::fill_create_platform_config_accounts(e, get);
             });
         }
 

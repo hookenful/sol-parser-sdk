@@ -78,6 +78,57 @@ pub struct BonkMigrateAmmEvent {
     pub liquidity_amount: u64,
 }
 
+/// Bonk (Raydium LaunchLab) InitializeV2 Event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BonkInitializeV2Event {
+    pub metadata: EventMetadata,
+    pub payer: Pubkey,
+    pub creator: Pubkey,
+    pub global_config: Pubkey,
+    pub platform_config: Pubkey,
+    pub authority: Pubkey,
+    pub pool_state: Pubkey,
+    pub base_mint: Pubkey,
+    pub quote_mint: Pubkey,
+    pub base_vault: Pubkey,
+    pub quote_vault: Pubkey,
+    pub base_mint_param: BaseMintParam,
+}
+
+/// Bonk (Raydium LaunchLab) MigrateNftInfo
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BonkMigrateNftInfo {
+    pub platform_scale: u64,
+    pub creator_scale: u64,
+    pub burn_scale: u64,
+}
+
+/// Bonk (Raydium LaunchLab) PlatformParams
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BonkPlatformParams {
+    pub migrate_nft_info: BonkMigrateNftInfo,
+    pub fee_rate: u64,
+    pub name: String,
+    pub web: String,
+    pub img: String,
+    pub creator_fee_rate: u64,
+    pub platform_vesting_scale: u64,
+}
+
+/// Bonk (Raydium LaunchLab) CreatePlatformConfig Event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BonkCreatePlatformConfigEvent {
+    pub metadata: EventMetadata,
+    pub platform_admin: Pubkey,
+    pub platform_fee_wallet: Pubkey,
+    pub platform_nft_wallet: Pubkey,
+    pub platform_config: Pubkey,
+    pub cpswap_config: Pubkey,
+    pub transfer_fee_extension_authority: Pubkey,
+    pub platform_vesting_wallet: Pubkey,
+    pub platform_params: BonkPlatformParams,
+}
+
 /// PumpFun Trade Event - 基于官方IDL定义
 ///
 /// 字段来源标记:
@@ -1846,6 +1897,8 @@ pub enum DexEvent {
     BonkTrade(BonkTradeEvent),
     BonkPoolCreate(BonkPoolCreateEvent),
     BonkMigrateAmm(BonkMigrateAmmEvent),
+    BonkInitializeV2(BonkInitializeV2Event),
+    BonkCreatePlatformConfig(BonkCreatePlatformConfigEvent),
 
     // Raydium CLMM 事件
     RaydiumClmmSwap(RaydiumClmmSwapEvent),
@@ -1949,6 +2002,8 @@ impl DexEvent {
             DexEvent::BonkTrade(e) => &e.metadata,
             DexEvent::BonkPoolCreate(e) => &e.metadata,
             DexEvent::BonkMigrateAmm(e) => &e.metadata,
+            DexEvent::BonkInitializeV2(e) => &e.metadata,
+            DexEvent::BonkCreatePlatformConfig(e) => &e.metadata,
 
             // Raydium CLMM 事件
             DexEvent::RaydiumClmmSwap(e) => &e.metadata,

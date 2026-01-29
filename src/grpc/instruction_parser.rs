@@ -328,7 +328,7 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
         use crate::grpc::types::EventType::*;
         matches!(
             t,
-            PumpFunMigrate | MeteoraDammV2Swap | MeteoraDammV2AddLiquidity
+            PumpFunMigrate | BonkInitializeV2 | MeteoraDammV2Swap | MeteoraDammV2AddLiquidity
                 | MeteoraDammV2CreatePosition | MeteoraDammV2ClosePosition
                 | MeteoraDammV2RemoveLiquidity
         )

@@ -12,6 +12,8 @@ pub mod discriminators {
     pub const TRADE: [u8; 8] = [2, 3, 4, 5, 6, 7, 8, 9];
     pub const POOL_CREATE: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     pub const MIGRATE_AMM: [u8; 8] = [3, 4, 5, 6, 7, 8, 9, 10];
+    /// Anchor discriminator for initialize_v2: sha256("global:initialize_v2")[..8]
+    pub const INITIALIZE_V2: [u8; 8] = [67, 153, 175, 39, 218, 16, 38, 32];
 }
 
 /// Raydium Launchpad 程序 ID
@@ -25,6 +27,7 @@ pub fn parse_instruction(
     slot: u64,
     tx_index: u64,
     block_time_us: Option<i64>,
+    grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     if instruction_data.len() < 8 {
         return None;
@@ -35,13 +38,16 @@ pub fn parse_instruction(
 
     match discriminator {
         discriminators::TRADE => {
-            parse_trade_instruction(data, accounts, signature, slot, tx_index, block_time_us)
+            parse_trade_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us)
         },
         discriminators::POOL_CREATE => {
-            parse_pool_create_instruction(data, accounts, signature, slot, tx_index, block_time_us)
+            parse_pool_create_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us)
         },
         discriminators::MIGRATE_AMM => {
-            parse_migrate_amm_instruction(data, accounts, signature, slot, tx_index, block_time_us)
+            parse_migrate_amm_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us)
+        },
+        discriminators::INITIALIZE_V2 => {
+            parse_initialize_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us)
         },
         _ => None,
     }
@@ -56,6 +62,7 @@ fn parse_trade_instruction(
     slot: u64,
     tx_index: u64,
     block_time_us: Option<i64>,
+    grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     let mut offset = 0;
 
@@ -65,7 +72,13 @@ fn parse_trade_instruction(
     let amount_out_min = read_u64_le(data, offset)?;
 
     let pool_state = get_account(accounts, 0)?;
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state);
+    let metadata = create_metadata(
+        signature,
+        slot,
+        tx_index,
+        block_time_us.unwrap_or_default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::BonkTrade(BonkTradeEvent {
         metadata,
@@ -87,9 +100,16 @@ fn parse_pool_create_instruction(
     slot: u64,
     tx_index: u64,
     block_time_us: Option<i64>,
+    grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     let pool_state = get_account(accounts, 0)?;
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state);
+    let metadata = create_metadata(
+        signature,
+        slot,
+        tx_index,
+        block_time_us.unwrap_or_default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::BonkPoolCreate(BonkPoolCreateEvent {
         metadata,
@@ -112,13 +132,20 @@ fn parse_migrate_amm_instruction(
     slot: u64,
     tx_index: u64,
     block_time_us: Option<i64>,
+    grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     let offset = 0;
 
     let liquidity_amount = read_u64_le(data, offset)?;
 
     let old_pool = get_account(accounts, 0)?;
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, old_pool);
+    let metadata = create_metadata(
+        signature,
+        slot,
+        tx_index,
+        block_time_us.unwrap_or_default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::BonkMigrateAmm(BonkMigrateAmmEvent {
         metadata,
@@ -127,4 +154,75 @@ fn parse_migrate_amm_instruction(
         user: get_account(accounts, 2).unwrap_or_default(),
         liquidity_amount,
     }))
+}
+
+/// 解析 InitializeV2 指令
+fn parse_initialize_v2_instruction(
+    data: &[u8],
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    let metadata = create_metadata(
+        signature,
+        slot,
+        tx_index,
+        block_time_us.unwrap_or_default(),
+        grpc_recv_us,
+    );
+
+    let base_mint_param = parse_base_mint_param(data);
+
+    Some(DexEvent::BonkInitializeV2(BonkInitializeV2Event {
+        metadata,
+        payer: get_account(accounts, 0).unwrap_or_default(),
+        creator: get_account(accounts, 1).unwrap_or_default(),
+        global_config: get_account(accounts, 2).unwrap_or_default(),
+        platform_config: get_account(accounts, 3).unwrap_or_default(),
+        authority: get_account(accounts, 4).unwrap_or_default(),
+        pool_state: get_account(accounts, 5).unwrap_or_default(),
+        base_mint: get_account(accounts, 6).unwrap_or_default(),
+        quote_mint: get_account(accounts, 7).unwrap_or_default(),
+        base_vault: get_account(accounts, 8).unwrap_or_default(),
+        quote_vault: get_account(accounts, 9).unwrap_or_default(),
+        base_mint_param,
+    }))
+}
+
+fn parse_base_mint_param(data: &[u8]) -> BaseMintParam {
+    let mut offset = 0usize;
+    let mut param = BaseMintParam {
+        symbol: String::new(),
+        name: String::new(),
+        uri: String::new(),
+        decimals: 0,
+    };
+
+    let Some(decimals) = read_u8(data, offset) else {
+        return param;
+    };
+    param.decimals = decimals;
+    offset += 1;
+
+    let Some((name, consumed)) = read_str_unchecked(data, offset) else {
+        return param;
+    };
+    param.name = name.to_string();
+    offset += consumed;
+
+    let Some((symbol, consumed)) = read_str_unchecked(data, offset) else {
+        return param;
+    };
+    param.symbol = symbol.to_string();
+    offset += consumed;
+
+    let Some((uri, _consumed)) = read_str_unchecked(data, offset) else {
+        return param;
+    };
+    param.uri = uri.to_string();
+
+    param
 }

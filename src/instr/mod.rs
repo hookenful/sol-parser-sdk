@@ -120,6 +120,21 @@ pub fn parse_instruction_unified(
             grpc_recv_us,
         );
     }
+    // Raydium LaunchLab (Bonk)
+    else if *program_id == BONK_PROGRAM_ID {
+        if event_type_filter.is_some() && !event_type_filter.unwrap().includes_raydium_launchpad() {
+            return None;
+        }
+        return raydium_launchpad::parse_instruction(
+            instruction_data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
+    }
 
     None
 }

@@ -13,19 +13,53 @@ pub mod discriminators {
     pub const MIGRATE_AMM: [u8; 8] = [3, 4, 5, 6, 7, 8, 9, 10];
 }
 
-/// Bonk 程序 ID
-pub const PROGRAM_ID: &str = "DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1";
+/// Raydium LaunchLab 程序 ID
+pub const PROGRAM_ID: &str = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj";
 
 /// 检查日志是否来自 Raydium Launchpad 程序
 pub fn is_raydium_launchpad_log(log: &str) -> bool {
     log.contains(&format!("Program {} invoke", PROGRAM_ID)) ||
     log.contains(&format!("Program {} success", PROGRAM_ID)) ||
-    log.contains("bonk") || log.contains("Bonk")
+    log.contains("launchlab") || log.contains("LaunchLab")
+}
+
+/// 检查日志是否为 CreatePlatformConfig 参数输出
+pub fn is_platform_params_log(log: &str) -> bool {
+    log.contains("PlatformParams {") || log.contains("CreatePlatformConfig")
 }
 
 /// 主要的 Bonk 日志解析函数
 pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
+}
+
+/// 解析 CreatePlatformConfig 文本日志
+pub fn parse_platform_config_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    if !log.contains("PlatformParams {") {
+        return None;
+    }
+
+    let platform_params = parse_platform_params(log);
+    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+
+    Some(DexEvent::BonkCreatePlatformConfig(BonkCreatePlatformConfigEvent {
+        metadata,
+        platform_admin: Pubkey::default(),
+        platform_fee_wallet: Pubkey::default(),
+        platform_nft_wallet: Pubkey::default(),
+        platform_config: Pubkey::default(),
+        cpswap_config: Pubkey::default(),
+        transfer_fee_extension_authority: Pubkey::default(),
+        platform_vesting_wallet: Pubkey::default(),
+        platform_params,
+    }))
 }
 
 
@@ -271,4 +305,75 @@ fn parse_migrate_from_text(tx_index: u64,
         user: Pubkey::default(),
         liquidity_amount: extract_number_from_text(log, "liquidity").unwrap_or(0),
     }))
+}
+
+fn parse_platform_params(log: &str) -> BonkPlatformParams {
+    let platform_scale = extract_u64_field(log, "platform_scale").unwrap_or(0);
+    let creator_scale = extract_u64_field(log, "creator_scale").unwrap_or(0);
+    let burn_scale = extract_u64_field(log, "burn_scale").unwrap_or(0);
+    let fee_rate = extract_u64_field(log, "fee_rate").unwrap_or(0);
+    let creator_fee_rate = extract_u64_field(log, "creator_fee_rate").unwrap_or(0);
+    let platform_vesting_scale = extract_u64_field(log, "platform_vesting_scale").unwrap_or(0);
+
+    let name = extract_string_field(log, "name").unwrap_or_default();
+    let web = extract_string_field(log, "web").unwrap_or_default();
+    let img = extract_string_field(log, "img").unwrap_or_default();
+
+    BonkPlatformParams {
+        migrate_nft_info: BonkMigrateNftInfo {
+            platform_scale,
+            creator_scale,
+            burn_scale,
+        },
+        fee_rate,
+        name,
+        web,
+        img,
+        creator_fee_rate,
+        platform_vesting_scale,
+    }
+}
+
+fn extract_u64_field(log: &str, field: &str) -> Option<u64> {
+    let key = format!("{}:", field);
+    let start = log.find(&key)? + key.len();
+    let rest = log[start..].trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    rest[..end].parse().ok()
+}
+
+fn extract_string_field(log: &str, field: &str) -> Option<String> {
+    let key = format!("{}:", field);
+    let start = log.find(&key)? + key.len();
+    let rest = log[start..].trim_start();
+    let quote_start = rest.find('\"')?;
+    let rest = &rest[quote_start + 1..];
+    let quote_end = rest.find('\"')?;
+    Some(rest[..quote_end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_platform_params() {
+        let log = r#"Program log: PlatformParams { migrate_nft_info: MigrateNftInfo { platform_scale: 1000000, creator_scale: 0, burn_scale: 0, }, fee_rate: 10000, name: "SURGE", web: "https://app.surge.xyz", img: "https://assets.surge.xyz/raydiumLogo.png", creator_fee_rate: 500, platform_vesting_scale: 0, }"#;
+
+        let params = parse_platform_params(log);
+        assert_eq!(params.migrate_nft_info.platform_scale, 1_000_000);
+        assert_eq!(params.migrate_nft_info.creator_scale, 0);
+        assert_eq!(params.migrate_nft_info.burn_scale, 0);
+        assert_eq!(params.fee_rate, 10_000);
+        assert_eq!(params.name, "SURGE");
+        assert_eq!(params.web, "https://app.surge.xyz");
+        assert_eq!(params.img, "https://assets.surge.xyz/raydiumLogo.png");
+        assert_eq!(params.creator_fee_rate, 500);
+        assert_eq!(params.platform_vesting_scale, 0);
+    }
 }
