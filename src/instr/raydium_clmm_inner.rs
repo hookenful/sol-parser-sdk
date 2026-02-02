@@ -15,6 +15,8 @@
 //! - **适用**: 性能关键路径、每秒数万次解析的场景
 
 use crate::core::events::*;
+use crate::instr::inner_common::*;
+use solana_sdk::pubkey::Pubkey;
 
 
 /// Raydium CLMM inner instruction discriminators (16 bytes)

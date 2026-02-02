@@ -14,7 +14,7 @@ use crate::logs::timestamp_to_microseconds;
 use crate::DexEvent;
 use crossbeam_queue::ArrayQueue;
 use futures::{SinkExt, StreamExt};
-use log::error;
+use log::{error, info};
 use memchr::memmem;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -36,6 +36,13 @@ pub struct YellowstoneGrpc {
     token: Option<String>,
     config: ClientConfig,
     control_tx: Arc<Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
+    last_filters: Arc<Mutex<SubscriptionFilters>>,
+}
+
+#[derive(Default)]
+struct SubscriptionFilters {
+    transaction_filters: Vec<TransactionFilter>,
+    account_filters: Vec<AccountFilter>,
 }
 
 impl YellowstoneGrpc {
@@ -44,8 +51,9 @@ impl YellowstoneGrpc {
         Ok(Self {
             endpoint,
             token,
-            config: ClientConfig::default(),
+            config: ClientConfig::low_latency(),
             control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
         })
     }
 
@@ -55,7 +63,13 @@ impl YellowstoneGrpc {
         config: ClientConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         crate::warmup::warmup_parser();
-        Ok(Self { endpoint, token, config, control_tx: Arc::new(Mutex::new(None)) })
+        Ok(Self {
+            endpoint,
+            token,
+            config,
+            control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+        })
     }
 
     /// 订阅 DEX 事件（自动重连）
@@ -69,15 +83,19 @@ impl YellowstoneGrpc {
         let queue_clone = Arc::clone(&queue);
         let self_clone = self.clone();
 
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters;
+            stored.account_filters = account_filters;
+        }
+
         tokio::spawn(async move {
-            let mut delay = 1u64;
             loop {
-                match self_clone.stream_events(&transaction_filters, &account_filters, &event_type_filter, &queue_clone).await {
-                    Ok(_) => delay = 1,
-                    Err(e) => println!("❌ gRPC error: {} - retry in {}s", e, delay),
+                match self_clone.stream_events(&event_type_filter, &queue_clone).await {
+                    Ok(_) => {}
+                    Err(e) => println!("❌ gRPC error: {} - retry in 1s", e),
                 }
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                delay = (delay * 2).min(60);
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
 
@@ -90,12 +108,22 @@ impl YellowstoneGrpc {
         transaction_filters: Vec<TransactionFilter>,
         account_filters: Vec<AccountFilter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let sender = self.control_tx.lock().await
+        let request = build_subscribe_request(&transaction_filters, &account_filters);
+
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters;
+            stored.account_filters = account_filters;
+        }
+
+        let sender = self
+            .control_tx
+            .lock()
+            .await
             .as_ref()
             .ok_or("No active subscription")?
             .clone();
-        
-        let request = build_subscribe_request(&transaction_filters, &account_filters);
+
         sender.send(request).await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -108,12 +136,29 @@ impl YellowstoneGrpc {
 
     async fn stream_events(
         &self,
-        tx_filters: &[TransactionFilter],
-        acc_filters: &[AccountFilter],
         event_filter: &Option<EventTypeFilter>,
         queue: &Arc<ArrayQueue<DexEvent>>,
     ) -> Result<(), String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let (tx_filters, acc_filters) = {
+            let stored = self.last_filters.lock().await;
+            (stored.transaction_filters.clone(), stored.account_filters.clone())
+        };
+
+        info!(
+            "gRPC config: endpoint={} tls={} conn_timeout={}ms request_timeout={}ms keepalive_interval={}ms keepalive_timeout={}ms buffer_size={} order_mode={:?} order_timeout_ms={} micro_batch_us={}",
+            self.endpoint,
+            self.config.enable_tls,
+            self.config.connection_timeout_ms,
+            self.config.request_timeout_ms,
+            self.config.keep_alive_interval_ms,
+            self.config.keep_alive_timeout_ms,
+            self.config.buffer_size,
+            self.config.order_mode,
+            self.config.order_timeout_ms,
+            self.config.micro_batch_us
+        );
         
         // 构建客户端
         let mut builder = GeyserGrpcClient::build_from_shared(self.endpoint.clone())
@@ -125,12 +170,29 @@ impl YellowstoneGrpc {
         if self.config.connection_timeout_ms > 0 {
             builder = builder.connect_timeout(Duration::from_millis(self.config.connection_timeout_ms));
         }
+        if self.config.request_timeout_ms > 0 {
+            builder = builder.timeout(Duration::from_millis(self.config.request_timeout_ms));
+        }
         if self.config.enable_tls {
             builder = builder.tls_config(ClientTlsConfig::new().with_native_roots()).map_err(|e| e.to_string())?;
         }
+        if self.config.buffer_size > 0 {
+            builder = builder.buffer_size(Some(self.config.buffer_size));
+        }
+        if self.config.keep_alive_interval_ms > 0 {
+            let interval = Duration::from_millis(self.config.keep_alive_interval_ms);
+            builder = builder
+                .http2_keep_alive_interval(interval)
+                .keep_alive_while_idle(true)
+                .tcp_keepalive(Some(interval));
+        }
+        if self.config.keep_alive_timeout_ms > 0 {
+            builder = builder.keep_alive_timeout(Duration::from_millis(self.config.keep_alive_timeout_ms));
+        }
+        builder = builder.tcp_nodelay(true).http2_adaptive_window(true);
 
         let mut client = builder.connect().await.map_err(|e| e.to_string())?;
-        let request = build_subscribe_request(tx_filters, acc_filters);
+        let request = build_subscribe_request(&tx_filters, &acc_filters);
         
         let (subscribe_tx, mut stream) = client
             .subscribe_with_request(Some(request))
@@ -154,6 +216,7 @@ impl YellowstoneGrpc {
         let batch_us = self.config.micro_batch_us;
         let check_interval = Duration::from_millis(timeout_ms / 2);
         let mut next_check = Instant::now() + check_interval;
+        let mut ping_id: i32 = 0;
 
         loop {
             // Periodic timeout check for ordered modes and MicroBatch
@@ -166,6 +229,14 @@ impl YellowstoneGrpc {
                 msg = stream.next() => {
                     match msg {
                         Some(Ok(update)) => {
+                            if let Some(subscribe_update::UpdateOneof::Ping(_)) = update.update_oneof.as_ref() {
+                                ping_id = ping_id.wrapping_add(1);
+                                let req = build_ping_request(ping_id);
+                                if let Err(e) = subscribe_tx.lock().await.send(req).await {
+                                    return Err(e.to_string());
+                                }
+                                continue;
+                            }
                             self.handle_update(
                                 update, order_mode, event_filter, queue,
                                 &mut slot_buffer, &mut micro_batch, &mut last_slot, batch_us
@@ -402,6 +473,22 @@ fn build_subscribe_request(tx_filters: &[TransactionFilter], acc_filters: &[Acco
         commitment: Some(CommitmentLevel::Processed as i32),
         accounts_data_slice: Vec::new(),
         ping: None,
+        from_slot: None,
+    }
+}
+
+fn build_ping_request(id: i32) -> SubscribeRequest {
+    SubscribeRequest {
+        slots: HashMap::new(),
+        accounts: HashMap::new(),
+        transactions: HashMap::new(),
+        transactions_status: HashMap::new(),
+        blocks: HashMap::new(),
+        blocks_meta: HashMap::new(),
+        entry: HashMap::new(),
+        commitment: None,
+        accounts_data_slice: Vec::new(),
+        ping: Some(SubscribeRequestPing { id }),
         from_slot: None,
     }
 }

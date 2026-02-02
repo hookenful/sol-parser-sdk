@@ -19,6 +19,8 @@ pub mod discriminators {
     pub const BUY_EXACT_SOL_IN: [u8; 8] = [56, 252, 116, 8, 158, 223, 205, 95];
     /// Migrate event log discriminator (CPI)
     pub const MIGRATE_EVENT_LOG: [u8; 8] = [189, 233, 93, 185, 92, 148, 234, 148];
+    /// Migrate instruction discriminator (global:migrate)
+    pub const MIGRATE: [u8; 8] = [155, 234, 231, 146, 236, 158, 162, 30];
 }
 
 /// PumpFun Program ID
@@ -27,7 +29,7 @@ pub const PROGRAM_ID_PUBKEY: Pubkey = program_ids::PUMPFUN_PROGRAM_ID;
 /// Main PumpFun instruction parser
 ///
 /// Note: Full event data (amounts, fees, reserves) is parsed from logs.
-/// Instruction parsing only handles MIGRATE_EVENT_LOG which is not available in logs.
+/// Instruction parsing handles migrate instruction and MIGRATE_EVENT_LOG CPI.
 pub fn parse_instruction(
     instruction_data: &[u8],
     accounts: &[Pubkey],
@@ -38,14 +40,29 @@ pub fn parse_instruction(
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     // BUY/SELL/CREATE events are parsed from logs for complete data
-    // Only parse MIGRATE_EVENT_LOG here (CPI instruction not available in logs)
-    if instruction_data.len() < 16 {
+    // Parse migrate instruction (8-byte discriminator) and MIGRATE_EVENT_LOG (CPI).
+    if instruction_data.len() < 8 {
         return None;
     }
 
+    let discriminator: [u8; 8] = instruction_data[0..8].try_into().ok()?;
+    if discriminator == discriminators::MIGRATE {
+        return parse_migrate_instruction(
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
+    }
+
+    if instruction_data.len() < 16 {
+        return None;
+    }
     let cpi_discriminator: [u8; 8] = instruction_data[8..16].try_into().ok()?;
     if cpi_discriminator == discriminators::MIGRATE_EVENT_LOG {
-        parse_migrate_log_instruction(
+        return parse_migrate_log_instruction(
             &instruction_data[16..],
             accounts,
             signature,
@@ -53,10 +70,9 @@ pub fn parse_instruction(
             tx_index,
             block_time_us,
             grpc_recv_us,
-        )
-    } else {
-        None
+        );
     }
+    None
 }
 
 /// Parse buy/buy_exact_sol_in instruction
@@ -275,5 +291,43 @@ fn parse_migrate_log_instruction(
         bonding_curve,
         timestamp,
         pool,
+    }))
+}
+
+/// Parse migrate instruction (global:migrate)
+fn parse_migrate_instruction(
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    // Need at least up to pool account per IDL.
+    if accounts.len() < 10 {
+        return None;
+    }
+
+    let metadata = create_metadata(
+        signature,
+        slot,
+        tx_index,
+        block_time_us.unwrap_or_default(),
+        grpc_recv_us,
+    );
+    let timestamp = block_time_us
+        .unwrap_or_default()
+        .saturating_div(1_000_000);
+
+    Some(DexEvent::PumpFunMigrate(PumpFunMigrateEvent {
+        metadata,
+        user: get_account(accounts, 5).unwrap_or_default(),
+        mint: get_account(accounts, 2).unwrap_or_default(),
+        mint_amount: 0,
+        sol_amount: 0,
+        pool_migration_fee: 0,
+        bonding_curve: get_account(accounts, 3).unwrap_or_default(),
+        timestamp,
+        pool: get_account(accounts, 9).unwrap_or_default(),
     }))
 }
