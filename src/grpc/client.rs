@@ -7,6 +7,7 @@
 //! - Ordered: 1-50ms 完全有序
 
 use super::buffers::{MicroBatchBuffer, SlotBuffer};
+use super::deduper::TxDeduper;
 use super::types::*;
 use crate::core::{EventMetadata, now_micros};  // 导入高性能时钟
 use crate::instr::read_pubkey_fast;
@@ -37,6 +38,7 @@ pub struct YellowstoneGrpc {
     config: ClientConfig,
     control_tx: Arc<Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
     last_filters: Arc<Mutex<SubscriptionFilters>>,
+    tx_deduper: Option<Arc<TxDeduper>>,
 }
 
 #[derive(Default)]
@@ -54,6 +56,7 @@ impl YellowstoneGrpc {
             config: ClientConfig::low_latency(),
             control_tx: Arc::new(Mutex::new(None)),
             last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
         })
     }
 
@@ -69,7 +72,13 @@ impl YellowstoneGrpc {
             config,
             control_tx: Arc::new(Mutex::new(None)),
             last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
         })
+    }
+
+    pub fn with_tx_deduper(mut self, tx_deduper: Arc<TxDeduper>) -> Self {
+        self.tx_deduper = Some(tx_deduper);
+        self
     }
 
     /// 订阅 DEX 事件（自动重连）
@@ -363,6 +372,27 @@ impl YellowstoneGrpc {
         block_us: i64,
     ) {
         let slot = tx.slot;
+
+        if let Some(deduper) = &self.tx_deduper {
+            let Some(info) = tx.transaction.as_ref() else { return };
+            let sig = extract_signature(&info.signature);
+            let log_enabled = log::log_enabled!(log::Level::Info);
+            let log_label = deduper.log_label();
+            let start_us = if log_enabled && log_label.is_some() {
+                now_micros()
+            } else {
+                0
+            };
+            if !deduper.check(sig, slot, grpc_us) {
+                return;
+            }
+            if let Some(label) = log_label {
+                if log_enabled {
+                    let dedup_us = now_micros().saturating_sub(start_us);
+                    info!("{label}: {}: {sig}: {slot}: dedup_us={dedup_us}", self.endpoint);
+                }
+            }
+        }
         
         match mode {
             OrderMode::Unordered => {
