@@ -7,8 +7,8 @@ pub mod meteora_damm;
 pub mod meteora_dlmm;
 pub mod orca_whirlpool;
 pub mod program_ids;
-pub mod pump_amm;
 pub mod pump;
+pub mod pump_amm;
 pub mod raydium_amm;
 pub mod raydium_clmm;
 pub mod raydium_cpmm;
@@ -16,11 +16,11 @@ pub mod raydium_launchpad;
 pub mod utils;
 
 // Inner instruction 解析器（16字节 discriminator）
-pub mod inner_common;        // 通用零拷贝读取函数
-pub mod pump_inner;          // PumpFun inner instruction
-pub mod pump_amm_inner;      // PumpSwap inner instruction
-pub mod raydium_clmm_inner;  // Raydium CLMM inner instruction
-pub mod all_inner;           // 其他所有协议的 inner instruction（统一文件）
+pub mod all_inner;
+pub mod inner_common; // 通用零拷贝读取函数
+pub mod pump_amm_inner; // PumpSwap inner instruction
+pub mod pump_inner; // PumpFun inner instruction
+pub mod raydium_clmm_inner; // Raydium CLMM inner instruction // 其他所有协议的 inner instruction（统一文件）
 use crate::grpc::types::{EventType, EventTypeFilter};
 use crate::logs::perf_hints::unlikely;
 

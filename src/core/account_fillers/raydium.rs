@@ -68,7 +68,10 @@ pub fn fill_clmm_create_pool_accounts(e: &mut RaydiumClmmCreatePoolEvent, get: &
 /// 12: tokenVault0
 /// 13: tokenVault1
 /// ...
-pub fn fill_clmm_open_position_accounts(e: &mut RaydiumClmmOpenPositionEvent, get: &AccountGetter<'_>) {
+pub fn fill_clmm_open_position_accounts(
+    e: &mut RaydiumClmmOpenPositionEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.user == Pubkey::default() {
         e.user = get(0); // payer
     }
@@ -87,7 +90,10 @@ pub fn fill_clmm_open_position_accounts(e: &mut RaydiumClmmOpenPositionEvent, ge
 /// 3: personalPosition
 /// 4: systemProgram
 /// 5: tokenProgram
-pub fn fill_clmm_close_position_accounts(e: &mut RaydiumClmmClosePositionEvent, get: &AccountGetter<'_>) {
+pub fn fill_clmm_close_position_accounts(
+    e: &mut RaydiumClmmClosePositionEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.user == Pubkey::default() {
         e.user = get(0);
     }
@@ -112,7 +118,10 @@ pub fn fill_clmm_close_position_accounts(e: &mut RaydiumClmmClosePositionEvent, 
 /// 9: tokenVault0
 /// 10: tokenVault1
 /// 11: tokenProgram
-pub fn fill_clmm_increase_liquidity_accounts(e: &mut RaydiumClmmIncreaseLiquidityEvent, get: &AccountGetter<'_>) {
+pub fn fill_clmm_increase_liquidity_accounts(
+    e: &mut RaydiumClmmIncreaseLiquidityEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.user == Pubkey::default() {
         e.user = get(0);
     }
@@ -134,7 +143,10 @@ pub fn fill_clmm_increase_liquidity_accounts(e: &mut RaydiumClmmIncreaseLiquidit
 /// 9: recipientTokenAccount0
 /// 10: recipientTokenAccount1
 /// 11: tokenProgram
-pub fn fill_clmm_decrease_liquidity_accounts(e: &mut RaydiumClmmDecreaseLiquidityEvent, get: &AccountGetter<'_>) {
+pub fn fill_clmm_decrease_liquidity_accounts(
+    e: &mut RaydiumClmmDecreaseLiquidityEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.user == Pubkey::default() {
         e.user = get(0);
     }

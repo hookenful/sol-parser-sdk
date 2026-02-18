@@ -115,10 +115,8 @@ pub fn parse_instructions_enhanced(
     let merged = merge_instruction_events(result);
 
     // 步骤 3.5: 转换 invokes HashMap 为字符串键（用于 fill_data）
-    let invokes_str: HashMap<&str, Vec<(i32, i32)>> = invokes
-        .iter()
-        .map(|(k, v)| (k.to_string().leak() as &str, v.clone()))
-        .collect();
+    let invokes_str: HashMap<&str, Vec<(i32, i32)>> =
+        invokes.iter().map(|(k, v)| (k.to_string().leak() as &str, v.clone())).collect();
 
     // 步骤 4: 填充账户上下文
     let mut final_result = Vec::with_capacity(merged.len());
@@ -169,15 +167,7 @@ fn parse_outer_instruction<'a>(
 
     // 调用现有的 instruction 解析器
     crate::instr::parse_instruction_unified(
-        data,
-        &accounts,
-        sig,
-        slot,
-        tx_idx,
-        block_us,
-        grpc_us,
-        filter,
-        program_id,
+        data, &accounts, sig, slot, tx_idx, block_us, grpc_us, filter, program_id,
     )
 }
 
@@ -231,7 +221,11 @@ fn parse_inner_instruction(
         }
         pump_amm_inner::parse_pumpswap_inner_instruction(&discriminator, inner_data, metadata)
     } else if *program_id == program_ids::RAYDIUM_CLMM_PROGRAM_ID {
-        raydium_clmm_inner::parse_raydium_clmm_inner_instruction(&discriminator, inner_data, metadata)
+        raydium_clmm_inner::parse_raydium_clmm_inner_instruction(
+            &discriminator,
+            inner_data,
+            metadata,
+        )
     } else if *program_id == program_ids::RAYDIUM_CPMM_PROGRAM_ID {
         all_inner::raydium_cpmm::parse(&discriminator, inner_data, metadata)
     } else if *program_id == program_ids::RAYDIUM_AMM_V4_PROGRAM_ID {
@@ -261,9 +255,7 @@ fn parse_inner_instruction(
 /// 2. Inner instruction 在 outer instruction 之后出现
 /// 3. 合并后返回更完整的事件
 #[inline]
-fn merge_instruction_events(
-    events: Vec<(usize, Option<usize>, DexEvent)>,
-) -> Vec<DexEvent> {
+fn merge_instruction_events(events: Vec<(usize, Option<usize>, DexEvent)>) -> Vec<DexEvent> {
     if events.is_empty() {
         return Vec::new();
     }
@@ -328,8 +320,11 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
         use crate::grpc::types::EventType::*;
         matches!(
             t,
-            PumpFunMigrate | MeteoraDammV2Swap | MeteoraDammV2AddLiquidity
-                | MeteoraDammV2CreatePosition | MeteoraDammV2ClosePosition
+            PumpFunMigrate
+                | MeteoraDammV2Swap
+                | MeteoraDammV2AddLiquidity
+                | MeteoraDammV2CreatePosition
+                | MeteoraDammV2ClosePosition
                 | MeteoraDammV2RemoveLiquidity
         )
     })
@@ -391,8 +386,8 @@ mod tests {
         });
 
         let events = vec![
-            (0, None, outer_event),          // outer instruction at index 0
-            (0, Some(0), inner_event),       // inner instruction at index 0
+            (0, None, outer_event),    // outer instruction at index 0
+            (0, Some(0), inner_event), // inner instruction at index 0
         ];
 
         let result = merge_instruction_events(events);

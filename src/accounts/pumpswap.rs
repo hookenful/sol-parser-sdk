@@ -104,17 +104,15 @@ pub fn parse_global_config(account: &AccountData, metadata: EventMetadata) -> Op
         reserved_fee_recipients,
     };
 
-    Some(DexEvent::PumpSwapGlobalConfigAccount(
-        PumpSwapGlobalConfigAccountEvent {
-            metadata,
-            pubkey: account.pubkey,
-            executable: account.executable,
-            lamports: account.lamports,
-            owner: account.owner,
-            rent_epoch: account.rent_epoch,
-            global_config,
-        },
-    ))
+    Some(DexEvent::PumpSwapGlobalConfigAccount(PumpSwapGlobalConfigAccountEvent {
+        metadata,
+        pubkey: account.pubkey,
+        executable: account.executable,
+        lamports: account.lamports,
+        owner: account.owner,
+        rent_epoch: account.rent_epoch,
+        global_config,
+    }))
 }
 
 /// 解析 PumpSwap Pool 账户

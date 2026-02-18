@@ -1,10 +1,10 @@
 //! 零拷贝解析器 - 极致性能优化
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use memchr::memmem;
-use base64::{Engine as _, engine::general_purpose};
 use super::perf_hints::prefetch_read;
+use crate::core::events::*;
+use base64::{engine::general_purpose, Engine as _};
+use memchr::memmem;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// 零分配 PumpFun Trade 事件解析（栈缓冲区）
 #[inline(always)]
@@ -50,9 +50,8 @@ pub fn parse_pumpfun_trade(
     }
 
     // 完整解码事件数据到栈缓冲区
-    let decoded_len = general_purpose::STANDARD
-        .decode_slice(data_part.as_bytes(), &mut decode_buf)
-        .ok()?;
+    let decoded_len =
+        general_purpose::STANDARD.decode_slice(data_part.as_bytes(), &mut decode_buf).ok()?;
 
     if decoded_len < 96 {
         return None;

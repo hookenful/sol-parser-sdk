@@ -6,11 +6,11 @@
 //! - 测试端到端延迟性能
 //! - 无排序开销，直接释放事件
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
     TransactionFilter, YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -107,7 +107,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                 println!("║  事件速率: {:>10.1} events/sec                  ║", events_per_sec);
                 println!("║  队列长度: {:>10}                              ║", queue_len);
                 println!("║  平均延迟: {:>10} μs                           ║", avg);
-                println!("║  最小延迟: {:>10} μs                           ║", if min == u64::MAX { 0 } else { min });
+                println!(
+                    "║  最小延迟: {:>10} μs                           ║",
+                    if min == u64::MAX { 0 } else { min }
+                );
                 println!("║  最大延迟: {:>10} μs                           ║", max);
                 println!("╚════════════════════════════════════════════════════╝\n");
 

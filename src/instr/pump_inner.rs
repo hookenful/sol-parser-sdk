@@ -29,7 +29,6 @@
 
 use crate::core::events::*;
 
-
 // ============================================================================
 // Inner Instruction Discriminators (16 bytes)
 // ============================================================================
@@ -40,20 +39,16 @@ pub mod discriminators {
     /// discriminator = sha256("event:TradeEvent")[..16]
     pub const TRADE_EVENT: [u8; 16] = [
         189, 219, 127, 211, 78, 230, 97, 238, // 前8字节
-        155, 167, 108, 32, 122, 76, 173, 64,  // 后8字节
+        155, 167, 108, 32, 122, 76, 173, 64, // 后8字节
     ];
 
     /// CreateTokenEvent discriminator
-    pub const CREATE_TOKEN_EVENT: [u8; 16] = [
-        27, 114, 169, 77, 222, 235, 99, 118,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const CREATE_TOKEN_EVENT: [u8; 16] =
+        [27, 114, 169, 77, 222, 235, 99, 118, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// MigrateEvent discriminator (PumpAmm migration)
-    pub const COMPLETE_PUMP_AMM_MIGRATION_EVENT: [u8; 16] = [
-        189, 233, 93, 185, 92, 148, 234, 148,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const COMPLETE_PUMP_AMM_MIGRATION_EVENT: [u8; 16] =
+        [189, 233, 93, 185, 92, 148, 234, 148, 155, 167, 108, 32, 122, 76, 173, 64];
 }
 
 // ============================================================================
@@ -136,7 +131,9 @@ pub fn parse_pumpfun_inner_instruction(
     match discriminator {
         &discriminators::TRADE_EVENT => parse_trade_event_inner(data, metadata),
         &discriminators::CREATE_TOKEN_EVENT => parse_create_event_inner(data, metadata),
-        &discriminators::COMPLETE_PUMP_AMM_MIGRATION_EVENT => parse_migrate_event_inner(data, metadata),
+        &discriminators::COMPLETE_PUMP_AMM_MIGRATION_EVENT => {
+            parse_migrate_event_inner(data, metadata)
+        }
         _ => None,
     }
 }
@@ -244,39 +241,24 @@ fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Op
         offset += 8;
 
         // 可选字段
-        let track_volume = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let track_volume =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
 
-        let total_unclaimed_tokens = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let total_unclaimed_tokens =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let total_claimed_tokens = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let total_claimed_tokens =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let current_sol_volume = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let current_sol_volume =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let last_update_timestamp = if offset + 8 <= data.len() {
-            read_i64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let last_update_timestamp =
+            if offset + 8 <= data.len() { read_i64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
         let ix_name = if offset + 4 <= data.len() {
@@ -416,11 +398,8 @@ fn parse_create_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> O
         };
         offset += 32;
 
-        let is_mayhem_mode = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let is_mayhem_mode =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
 
         Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
             metadata,

@@ -44,9 +44,7 @@ impl AccountPubkeyCache {
     ///
     /// 预分配32个位置，覆盖大多数交易场景
     pub fn new() -> Self {
-        Self {
-            cache: Vec::with_capacity(32),
-        }
+        Self { cache: Vec::with_capacity(32) }
     }
 
     /// 从指令账户索引构建账户公钥向量

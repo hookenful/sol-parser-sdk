@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Bonk 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Bonk discriminator 常量
 pub mod discriminators {
@@ -36,13 +36,13 @@ pub fn parse_instruction(
     match discriminator {
         discriminators::TRADE => {
             parse_trade_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         discriminators::POOL_CREATE => {
             parse_pool_create_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         discriminators::MIGRATE_AMM => {
             parse_migrate_amm_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         _ => None,
     }
 }
@@ -73,7 +73,7 @@ fn parse_trade_instruction(
         user: get_account(accounts, 1).unwrap_or_default(),
         amount_in,
         amount_out: amount_out_min, // 先用指令中的最小值，日志会覆盖实际值
-        is_buy: true, // 默认为买入，实际值从日志确定
+        is_buy: true,               // 默认为买入，实际值从日志确定
         trade_direction: TradeDirection::Buy,
         exact_in: true,
     }))

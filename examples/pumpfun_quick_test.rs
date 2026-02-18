@@ -25,12 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Subscribing... (no event filter - will show ALL events)");
 
     // 无过滤器 - 订阅所有事件
-    let queue = grpc.subscribe_dex_events(
-        vec![transaction_filter],
-        vec![account_filter],
-        None,  // 无过滤 - 所有事件都会显示
-    )
-    .await?;
+    let queue = grpc
+        .subscribe_dex_events(
+            vec![transaction_filter],
+            vec![account_filter],
+            None, // 无过滤 - 所有事件都会显示
+        )
+        .await?;
 
     println!("🎧 Listening for events... (waiting up to 60 seconds)\n");
 

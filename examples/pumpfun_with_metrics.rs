@@ -1,8 +1,8 @@
+use sol_parser_sdk::core::now_micros; // 使用 SDK 的高性能时钟
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, Protocol, TransactionFilter,
     YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;  // 使用 SDK 的高性能时钟
 use sol_parser_sdk::DexEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -74,12 +74,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("📋 Event Filter: Buy, Sell, BuyExactSolIn, Create");
 
-    let queue = grpc.subscribe_dex_events(
-        vec![transaction_filter],
-        vec![account_filter],
-        Some(event_filter),
-    )
-    .await?;
+    let queue = grpc
+        .subscribe_dex_events(vec![transaction_filter], vec![account_filter], Some(event_filter))
+        .await?;
 
     // 性能统计
     let event_count = Arc::new(AtomicU64::new(0));
@@ -117,7 +114,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                 println!("║  事件速率: {:>10.1} events/sec                  ║", events_per_sec);
                 println!("║  队列长度: {:>10}                              ║", queue_len);
                 println!("║  平均延迟: {:>10} μs                           ║", avg);
-                println!("║  最小延迟: {:>10} μs                           ║", if min == u64::MAX { 0 } else { min });
+                println!(
+                    "║  最小延迟: {:>10} μs                           ║",
+                    if min == u64::MAX { 0 } else { min }
+                );
                 println!("║  最大延迟: {:>10} μs                           ║", max);
                 println!("╚════════════════════════════════════════════════════╝\n");
 

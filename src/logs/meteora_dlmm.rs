@@ -2,9 +2,9 @@
 //!
 //! Parse Meteora DLMM program log events
 
-use solana_sdk::signature::Signature;
-use crate::core::events::*;
 use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::signature::Signature;
 
 /// Meteora DLMM 事件 discriminator 常量
 pub mod discriminators {
@@ -19,7 +19,14 @@ pub mod discriminators {
 }
 
 /// 主要的 Meteora DLMM 日志解析函数
-pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
+pub fn parse_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
 }
 
@@ -43,25 +50,40 @@ fn parse_structured_log(
     match discriminator {
         discriminators::SWAP_EVENT => {
             parse_swap_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::ADD_LIQUIDITY_EVENT => {
             parse_add_liquidity_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::REMOVE_LIQUIDITY_EVENT => {
-            parse_remove_liquidity_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::INITIALIZE_POOL_EVENT => {
-            parse_initialize_pool_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::CREATE_POSITION_EVENT => {
-            parse_create_position_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
+        discriminators::REMOVE_LIQUIDITY_EVENT => parse_remove_liquidity_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::INITIALIZE_POOL_EVENT => parse_initialize_pool_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::CREATE_POSITION_EVENT => parse_create_position_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         discriminators::CLOSE_POSITION_EVENT => {
             parse_close_position_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::CLAIM_FEE_EVENT => {
             parse_claim_fee_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         _ => None,
     }
 }
@@ -109,7 +131,8 @@ fn parse_swap_event(
 
     let host_fee = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmSwap(MeteoraDlmmSwapEvent {
         metadata,
@@ -155,7 +178,8 @@ fn parse_add_liquidity_event(
 
     let active_bin_id = read_u32_le(data, offset)? as i32;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmAddLiquidity(MeteoraDlmmAddLiquidityEvent {
         metadata,
@@ -195,7 +219,8 @@ fn parse_remove_liquidity_event(
 
     let active_bin_id = read_u32_le(data, offset)? as i32;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmRemoveLiquidity(MeteoraDlmmRemoveLiquidityEvent {
         metadata,
@@ -229,7 +254,8 @@ fn parse_initialize_pool_event(
 
     let bin_step = read_u16_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmInitializePool(MeteoraDlmmInitializePoolEvent {
         metadata,
@@ -265,7 +291,8 @@ fn parse_create_position_event(
 
     let width = read_u32_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmCreatePosition(MeteoraDlmmCreatePositionEvent {
         metadata,
@@ -296,7 +323,8 @@ fn parse_close_position_event(
 
     let owner = read_pubkey(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmClosePosition(MeteoraDlmmClosePositionEvent {
         metadata,
@@ -331,7 +359,8 @@ fn parse_claim_fee_event(
 
     let fee_y = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDlmmClaimFee(MeteoraDlmmClaimFeeEvent {
         metadata,
@@ -359,15 +388,36 @@ fn parse_text_log(
     }
 
     if log.contains("add") && log.contains("liquidity") {
-        return parse_add_liquidity_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_add_liquidity_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     if log.contains("remove") && log.contains("liquidity") {
-        return parse_remove_liquidity_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_remove_liquidity_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     if log.contains("initialize") && log.contains("pool") {
-        return parse_initialize_pool_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_initialize_pool_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     None
@@ -384,7 +434,14 @@ fn parse_swap_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, solana_sdk::pubkey::Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        solana_sdk::pubkey::Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::MeteoraDlmmSwap(MeteoraDlmmSwapEvent {
         metadata,
@@ -413,7 +470,14 @@ fn parse_add_liquidity_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, solana_sdk::pubkey::Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        solana_sdk::pubkey::Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::MeteoraDlmmAddLiquidity(MeteoraDlmmAddLiquidityEvent {
         metadata,
@@ -439,7 +503,14 @@ fn parse_remove_liquidity_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, solana_sdk::pubkey::Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        solana_sdk::pubkey::Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::MeteoraDlmmRemoveLiquidity(MeteoraDlmmRemoveLiquidityEvent {
         metadata,
@@ -465,7 +536,14 @@ fn parse_initialize_pool_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, solana_sdk::pubkey::Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        solana_sdk::pubkey::Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::MeteoraDlmmInitializePool(MeteoraDlmmInitializePoolEvent {
         metadata,

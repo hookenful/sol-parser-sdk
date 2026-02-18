@@ -10,11 +10,11 @@
 //! cargo run --example meteora_damm_grpc --release
 //! ```
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
     TransactionFilter, YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 
 #[tokio::main]
@@ -49,11 +49,7 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_endpoint = std::env::var("GRPC_ENDPOINT")
         .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string());
 
-    let grpc = YellowstoneGrpc::new_with_config(
-        grpc_endpoint.clone(),
-        None,
-        config,
-    )?;
+    let grpc = YellowstoneGrpc::new_with_config(grpc_endpoint.clone(), None, config)?;
 
     println!("✅ gRPC client created (parser pre-warmed)");
     println!("📡 Endpoint: {}", grpc_endpoint);
@@ -130,21 +126,34 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🔄 Meteora DAMM SWAP (V1) #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
-                        println!("│ Direction  : {}", if e.trade_direction == 0 { "A→B" } else { "B→A" });
+                        println!(
+                            "│ Direction  : {}",
+                            if e.trade_direction == 0 { "A→B" } else { "B→A" }
+                        );
                         println!("│ Amount In  : {}", e.amount_in);
                         println!("│ Amount Out : {}", e.output_amount);
                         println!("│ LP Fee     : {}", e.lp_fee);
                         println!("│ Protocol   : {}", e.protocol_fee);
                         println!("│ Partner    : {}", e.partner_fee);
-                        println!("│ Referral   : {} (has_referral: {})", e.referral_fee, e.has_referral);
+                        println!(
+                            "│ Referral   : {} (has_referral: {})",
+                            e.referral_fee, e.has_referral
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
-                                 swap_count, swap2_count, add_liquidity_count, remove_liquidity_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
+                            swap_count, swap2_count, add_liquidity_count, remove_liquidity_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::MeteoraDammV2Swap(e) => {
@@ -156,23 +165,36 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🔄 Meteora DAMM SWAP2 (V2) #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
-                        println!("│ Direction  : {}", if e.trade_direction == 0 { "A→B" } else { "B→A" });
+                        println!(
+                            "│ Direction  : {}",
+                            if e.trade_direction == 0 { "A→B" } else { "B→A" }
+                        );
                         println!("│ Amount In  : {}", e.amount_in);
                         println!("│ Min Out    : {}", e.minimum_amount_out);
                         println!("│ Actual Out : {}", e.output_amount);
                         println!("│ Actual In  : {}", e.actual_amount_in);
                         println!("│ LP Fee     : {}", e.lp_fee);
                         println!("│ Protocol   : {}", e.protocol_fee);
-                        println!("│ Referral   : {} (has_referral: {})", e.referral_fee, e.has_referral);
+                        println!(
+                            "│ Referral   : {} (has_referral: {})",
+                            e.referral_fee, e.has_referral
+                        );
                         println!("│ Sqrt Price : {}", e.next_sqrt_price);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
-                                 swap_count, swap2_count, add_liquidity_count, remove_liquidity_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
+                            swap_count, swap2_count, add_liquidity_count, remove_liquidity_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::MeteoraDammAddLiquidity(e) => {
@@ -184,7 +206,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ ➕ Meteora DAMM ADD LIQUIDITY #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
                         println!("│ Token A In : {}", e.token_a_amount);
@@ -192,9 +217,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ LP Minted  : {}", e.lp_mint_amount);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
-                                 swap_count, swap2_count, add_liquidity_count, remove_liquidity_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
+                            swap_count, swap2_count, add_liquidity_count, remove_liquidity_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::MeteoraDammRemoveLiquidity(e) => {
@@ -206,7 +235,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ ➖ Meteora DAMM REMOVE LIQUIDITY #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
                         println!("│ Token A Out: {}", e.token_a_amount);
@@ -214,9 +246,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ LP Burned  : {}", e.lp_unmint_amount);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
-                                 swap_count, swap2_count, add_liquidity_count, remove_liquidity_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
+                            swap_count, swap2_count, add_liquidity_count, remove_liquidity_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     _ => {}

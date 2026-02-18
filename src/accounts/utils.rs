@@ -20,9 +20,7 @@ pub fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
     if data.len() < offset + 8 {
         return None;
     }
-    Some(u64::from_le_bytes(
-        data[offset..offset + 8].try_into().ok()?,
-    ))
+    Some(u64::from_le_bytes(data[offset..offset + 8].try_into().ok()?))
 }
 
 /// 从字节数组中读取 u16（小端序）
@@ -31,9 +29,7 @@ pub fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
     if data.len() < offset + 2 {
         return None;
     }
-    Some(u16::from_le_bytes(
-        data[offset..offset + 2].try_into().ok()?,
-    ))
+    Some(u16::from_le_bytes(data[offset..offset + 2].try_into().ok()?))
 }
 
 /// 从字节数组中读取 u8

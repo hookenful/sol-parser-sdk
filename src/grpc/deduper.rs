@@ -23,12 +23,7 @@ impl TxDeduper {
     pub fn new(ttl: Duration, log_label: Option<String>) -> Self {
         let ttl_us = ttl.as_micros().min(i64::MAX as u128) as i64;
         let ttl_us = ttl_us.max(1);
-        Self {
-            ttl_us,
-            log_label,
-            entries: DashMap::new(),
-            last_cleanup_us: AtomicI64::new(0),
-        }
+        Self { ttl_us, log_label, entries: DashMap::new(), last_cleanup_us: AtomicI64::new(0) }
     }
 
     #[inline]

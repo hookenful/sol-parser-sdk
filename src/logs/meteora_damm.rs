@@ -182,7 +182,8 @@ fn parse_swap_event(
     // currentTimestamp (u64 - 8 bytes)
     let current_timestamp = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraDammV2Swap(MeteoraDammV2SwapEvent {
         metadata,
@@ -287,7 +288,8 @@ fn parse_swap2_event(
     // currentTimestamp (u64 - 8 bytes)
     let current_timestamp = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     // 根据 swap_mode 和 trade_direction 确定实际的 amount_in
     // swap_mode: 0 = ExactIn, 1 = ExactOut

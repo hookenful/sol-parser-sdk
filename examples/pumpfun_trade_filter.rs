@@ -5,11 +5,11 @@
 //! - Filter specific trade types: Buy, Sell, BuyExactSolIn
 //! - Display trade details with latency metrics
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
     TransactionFilter, YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 
 #[tokio::main]
@@ -56,7 +56,7 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     let account_filter = AccountFilter::for_protocols(&protocols);
 
     // ========== Event Type Filter Examples ==========
-    // 
+    //
     // Example 1: Subscribe to BUY events only
     // let event_filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
     //
@@ -127,7 +127,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🟢 PumpFun BUY #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports", e.sol_amount);
@@ -136,8 +139,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ ix_name    : {}", e.ix_name);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={}", buy_count, sell_count, buy_exact_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={}",
+                            buy_count, sell_count, buy_exact_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunSell(e) => {
@@ -149,7 +157,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🔴 PumpFun SELL #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports", e.sol_amount);
@@ -158,8 +169,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ ix_name    : {}", e.ix_name);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={}", buy_count, sell_count, buy_exact_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={}",
+                            buy_count, sell_count, buy_exact_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunBuyExactSolIn(e) => {
@@ -171,7 +187,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🟡 PumpFun BUY_EXACT_SOL_IN #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports (exact input)", e.sol_amount);
@@ -180,8 +199,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ ix_name    : {}", e.ix_name);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={}", buy_count, sell_count, buy_exact_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={}",
+                            buy_count, sell_count, buy_exact_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunTrade(e) => {
@@ -194,7 +218,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ ix_name    : {} (is_buy={})", e.ix_name, e.is_buy);
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunCreate(e) => {
@@ -206,7 +232,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🆕 PumpFun CREATE #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Name       : {}", e.name);
                         println!("│ Symbol     : {}", e.symbol);
@@ -215,7 +244,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!("│ 📊 Creates : {}", create_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     _ => {}

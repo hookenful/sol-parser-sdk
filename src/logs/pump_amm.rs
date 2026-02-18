@@ -35,11 +35,12 @@ pub static PARSE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 pub mod discriminators {
     // Use u64 direct comparison to avoid array comparison
     // Event discriminators from pump_amm.json
-    pub const BUY: u64 = u64::from_le_bytes([103, 244, 82, 31, 44, 245, 119, 119]);           // BuyEvent
-    pub const SELL: u64 = u64::from_le_bytes([62, 47, 55, 10, 165, 3, 220, 42]);              // SellEvent
+    pub const BUY: u64 = u64::from_le_bytes([103, 244, 82, 31, 44, 245, 119, 119]); // BuyEvent
+    pub const SELL: u64 = u64::from_le_bytes([62, 47, 55, 10, 165, 3, 220, 42]); // SellEvent
     pub const CREATE_POOL: u64 = u64::from_le_bytes([177, 49, 12, 210, 160, 118, 167, 116]); // CreatePoolEvent
     pub const ADD_LIQUIDITY: u64 = u64::from_le_bytes([120, 248, 61, 83, 31, 142, 107, 144]); // DepositEvent
-    pub const REMOVE_LIQUIDITY: u64 = u64::from_le_bytes([22, 9, 133, 26, 160, 44, 71, 192]); // WithdrawEvent
+    pub const REMOVE_LIQUIDITY: u64 = u64::from_le_bytes([22, 9, 133, 26, 160, 44, 71, 192]);
+    // WithdrawEvent
 }
 
 /// Base64 查找器预计算 (用于快速定位)
@@ -69,9 +70,8 @@ fn extract_program_data_zero_copy<'a>(log: &'a str, buf: &'a mut [u8; 2048]) -> 
 
     // SIMD-accelerated base64 decoding (AVX2/SSE4/NEON)
     use base64_simd::AsOut;
-    let decoded_slice = base64_simd::STANDARD
-        .decode(trimmed.as_bytes(), buf.as_mut().as_out())
-        .ok()?;
+    let decoded_slice =
+        base64_simd::STANDARD.decode(trimmed.as_bytes(), buf.as_mut().as_out()).ok()?;
 
     Some(decoded_slice)
 }
@@ -92,9 +92,7 @@ fn extract_discriminator_simd(log: &str) -> Option<u64> {
     // 只解码前16字节以获取 discriminator (SIMD-accelerated)
     use base64_simd::AsOut;
     let mut buf = [0u8; 12];
-    base64_simd::STANDARD
-        .decode(&trimmed.as_bytes()[..16], buf.as_mut().as_out())
-        .ok()?;
+    base64_simd::STANDARD.decode(&trimmed.as_bytes()[..16], buf.as_mut().as_out()).ok()?;
 
     // 使用 unsafe 读取 u64 (零拷贝，无边界检查)
     unsafe {
@@ -216,15 +214,30 @@ pub fn parse_log(
         discriminators::SELL => {
             parse_sell_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
         }
-        discriminators::CREATE_POOL => {
-            parse_create_pool_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
-        discriminators::ADD_LIQUIDITY => {
-            parse_add_liquidity_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
-        discriminators::REMOVE_LIQUIDITY => {
-            parse_remove_liquidity_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
+        discriminators::CREATE_POOL => parse_create_pool_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::ADD_LIQUIDITY => parse_add_liquidity_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::REMOVE_LIQUIDITY => parse_remove_liquidity_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         _ => None,
     };
 
@@ -448,7 +461,7 @@ fn parse_create_pool_event_optimized(
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     // 一次性边界检查
-    const REQUIRED_LEN: usize = 8 + 2 + 32*6 + 2 + 8*7 + 1;
+    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -831,7 +844,7 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
 /// Parse PumpSwap CreatePool event from pre-decoded data
 #[inline(always)]
 pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
-    const REQUIRED_LEN: usize = 8 + 2 + 32*6 + 2 + 8*7 + 1;
+    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1;
     if data.len() < REQUIRED_LEN {
         return None;
     }

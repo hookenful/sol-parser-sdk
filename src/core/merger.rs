@@ -25,12 +25,16 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
 
     match (base, inner) {
         // ========== PumpFun 系列 ==========
-        (PumpFunTrade(b), PumpFunTrade(i)) | (PumpFunTrade(b), PumpFunBuy(i))
-        | (PumpFunTrade(b), PumpFunSell(i)) | (PumpFunTrade(b), PumpFunBuyExactSolIn(i))
-        | (PumpFunBuy(b), PumpFunTrade(i)) | (PumpFunBuy(b), PumpFunBuy(i))
-        | (PumpFunSell(b), PumpFunTrade(i)) | (PumpFunSell(b), PumpFunSell(i))
-        | (PumpFunBuyExactSolIn(b), PumpFunTrade(i)) | (PumpFunBuyExactSolIn(b), PumpFunBuyExactSolIn(i))
-            => merge_pumpfun_trade(b, i),
+        (PumpFunTrade(b), PumpFunTrade(i))
+        | (PumpFunTrade(b), PumpFunBuy(i))
+        | (PumpFunTrade(b), PumpFunSell(i))
+        | (PumpFunTrade(b), PumpFunBuyExactSolIn(i))
+        | (PumpFunBuy(b), PumpFunTrade(i))
+        | (PumpFunBuy(b), PumpFunBuy(i))
+        | (PumpFunSell(b), PumpFunTrade(i))
+        | (PumpFunSell(b), PumpFunSell(i))
+        | (PumpFunBuyExactSolIn(b), PumpFunTrade(i))
+        | (PumpFunBuyExactSolIn(b), PumpFunBuyExactSolIn(i)) => merge_pumpfun_trade(b, i),
 
         (PumpFunCreate(b), PumpFunCreate(i)) => merge_pumpfun_create(b, i),
         (PumpFunMigrate(b), PumpFunMigrate(i)) => merge_pumpfun_migrate(b, i),
@@ -61,8 +65,12 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
 
         // ========== Orca Whirlpool 系列 ==========
         (OrcaWhirlpoolSwap(b), OrcaWhirlpoolSwap(i)) => merge_generic(b, i),
-        (OrcaWhirlpoolLiquidityIncreased(b), OrcaWhirlpoolLiquidityIncreased(i)) => merge_generic(b, i),
-        (OrcaWhirlpoolLiquidityDecreased(b), OrcaWhirlpoolLiquidityDecreased(i)) => merge_generic(b, i),
+        (OrcaWhirlpoolLiquidityIncreased(b), OrcaWhirlpoolLiquidityIncreased(i)) => {
+            merge_generic(b, i)
+        }
+        (OrcaWhirlpoolLiquidityDecreased(b), OrcaWhirlpoolLiquidityDecreased(i)) => {
+            merge_generic(b, i)
+        }
 
         // ========== Meteora Pools (AMM) 系列 ==========
         (MeteoraPoolsSwap(b), MeteoraPoolsSwap(i)) => merge_generic(b, i),
@@ -288,10 +296,7 @@ mod tests {
 
         // 不同 signature 不能合并
         let different_sig = DexEvent::PumpFunTrade(PumpFunTradeEvent {
-            metadata: EventMetadata {
-                signature: Signature::new_unique(),
-                ..metadata
-            },
+            metadata: EventMetadata { signature: Signature::new_unique(), ..metadata },
             ..Default::default()
         });
 

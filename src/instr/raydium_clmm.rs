@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Raydium CLMM 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Raydium CLMM discriminator 常量
 /// 参考: solana-streamer/src/streaming/event_parser/protocols/raydium_clmm/events.rs
@@ -13,7 +13,7 @@ pub mod discriminators {
     pub const SWAP: [u8; 8] = [248, 198, 158, 145, 225, 117, 135, 200];
     pub const SWAP_V2: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98];
     pub const INCREASE_LIQUIDITY_V2: [u8; 8] = [133, 29, 89, 223, 69, 238, 176, 10];
-    pub const DECREASE_LIQUIDITY_V2: [u8; 8] = [58, 127, 188, 62, 79, 82, 196, 96];  // ✅ 修复：使用 V2 discriminator
+    pub const DECREASE_LIQUIDITY_V2: [u8; 8] = [58, 127, 188, 62, 79, 82, 196, 96]; // ✅ 修复：使用 V2 discriminator
     pub const CREATE_POOL: [u8; 8] = [233, 146, 209, 142, 207, 104, 64, 188];
     pub const OPEN_POSITION_V2: [u8; 8] = [77, 184, 74, 214, 112, 86, 241, 199];
     pub const OPEN_POSITION_WITH_TOKEN_22_NFT: [u8; 8] = [77, 255, 174, 82, 125, 29, 201, 46];
@@ -42,28 +42,55 @@ pub fn parse_instruction(
     match discriminator {
         discriminators::SWAP => {
             parse_swap_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         discriminators::SWAP_V2 => {
             parse_swap_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        discriminators::INCREASE_LIQUIDITY_V2 => {
-            parse_increase_liquidity_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        discriminators::DECREASE_LIQUIDITY_V2 => {
-            parse_decrease_liquidity_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        discriminators::INCREASE_LIQUIDITY_V2 => parse_increase_liquidity_v2_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        discriminators::DECREASE_LIQUIDITY_V2 => parse_decrease_liquidity_v2_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         discriminators::CREATE_POOL => {
             parse_create_pool_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        discriminators::OPEN_POSITION_V2 => {
-            parse_open_position_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        discriminators::OPEN_POSITION_V2 => parse_open_position_v2_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         discriminators::OPEN_POSITION_WITH_TOKEN_22_NFT => {
-            parse_open_position_with_token_22_nft_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        discriminators::CLOSE_POSITION => {
-            parse_close_position_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+            parse_open_position_with_token_22_nft_instruction(
+                data,
+                accounts,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+            )
+        }
+        discriminators::CLOSE_POSITION => parse_close_position_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         _ => None,
     }
 }
@@ -101,21 +128,21 @@ fn parse_swap_instruction(
         sender: get_account(accounts, 1).unwrap_or_default(),
         token_account_0: Pubkey::default(),
         token_account_1: Pubkey::default(),
-        amount_0: 0, // 从日志填充
+        amount_0: 0,       // 从日志填充
         transfer_fee_0: 0, // 从日志填充
-        amount_1: 0, // 从日志填充
+        amount_1: 0,       // 从日志填充
         transfer_fee_1: 0, // 从日志填充
         zero_for_one: is_base_input,
         sqrt_price_x64: sqrt_price_limit_x64,
         // is_base_input,
         liquidity: 0, // 从日志填充
-        tick: 0, // 从日志填充
+        tick: 0,      // 从日志填充
 
-        // 暂时注释，以后会用，AI禁止改动
-        // 指令参数字段
-        // amount,
-        // other_amount_threshold,
-        // sqrt_price_limit_x64,
+                      // 暂时注释，以后会用，AI禁止改动
+                      // 指令参数字段
+                      // amount,
+                      // other_amount_threshold,
+                      // sqrt_price_limit_x64,
     }))
 }
 
@@ -222,8 +249,8 @@ fn parse_create_pool_instruction(
         pool,
         token_0_mint: get_account(accounts, 2).unwrap_or_default(),
         token_1_mint: get_account(accounts, 3).unwrap_or_default(),
-        tick_spacing: 0,  // 从主指令解析
-        fee_rate: 0,      // 从主指令解析
+        tick_spacing: 0, // 从主指令解析
+        fee_rate: 0,     // 从主指令解析
         creator: get_account(accounts, 1).unwrap_or_default(),
         sqrt_price_x64,
         open_time,

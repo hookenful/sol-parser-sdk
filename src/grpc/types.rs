@@ -225,9 +225,9 @@ pub enum EventType {
     BonkMigrateAmm,
 
     // PumpFun events
-    PumpFunTrade,    // All trade events (backward compatible)
-    PumpFunBuy,      // Buy events only (filter by ix_name)
-    PumpFunSell,     // Sell events only (filter by ix_name)
+    PumpFunTrade,         // All trade events (backward compatible)
+    PumpFunBuy,           // Buy events only (filter by ix_name)
+    PumpFunSell,          // Sell events only (filter by ix_name)
     PumpFunBuyExactSolIn, // BuyExactSolIn events only (filter by ix_name)
     PumpFunCreate,
     PumpFunComplete,
@@ -324,9 +324,14 @@ impl EventTypeFilter {
             // If filter includes any of these specific types, allow PumpFunTrade through
             // (secondary filtering will happen after parsing)
             if event_type == EventType::PumpFunTrade {
-                return include_only.iter().any(|t| matches!(t,
-                    EventType::PumpFunBuy | EventType::PumpFunSell | EventType::PumpFunBuyExactSolIn
-                ));
+                return include_only.iter().any(|t| {
+                    matches!(
+                        t,
+                        EventType::PumpFunBuy
+                            | EventType::PumpFunSell
+                            | EventType::PumpFunBuyExactSolIn
+                    )
+                });
             }
             return false;
         }
@@ -439,9 +444,7 @@ impl EventTypeFilter {
             return include_only.iter().any(|t| {
                 matches!(
                     t,
-                    EventType::BonkTrade
-                        | EventType::BonkPoolCreate
-                        | EventType::BonkMigrateAmm
+                    EventType::BonkTrade | EventType::BonkPoolCreate | EventType::BonkMigrateAmm
                 )
             });
         }
@@ -449,9 +452,7 @@ impl EventTypeFilter {
             return !exclude_types.iter().any(|t| {
                 matches!(
                     t,
-                    EventType::BonkTrade
-                        | EventType::BonkPoolCreate
-                        | EventType::BonkMigrateAmm
+                    EventType::BonkTrade | EventType::BonkPoolCreate | EventType::BonkMigrateAmm
                 )
             });
         }

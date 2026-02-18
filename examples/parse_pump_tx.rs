@@ -10,14 +10,15 @@
 //! cargo run --example parse_pump_tx --release
 //! ```
 
+use sol_parser_sdk::parse_transaction_from_rpc;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::signature::Signature;
-use sol_parser_sdk::parse_transaction_from_rpc;
 use std::str::FromStr;
 
 fn main() {
     // 交易签名
-    let tx_sig = "5curEt85cQhAK6R9pntSJ4fmYCiPEG22NjZyGrnGSbNwAkHJMN25T9Efp1n9Tf9vGXhnDXMQYrCNpoRHQTMcZ1s9";
+    let tx_sig =
+        "5curEt85cQhAK6R9pntSJ4fmYCiPEG22NjZyGrnGSbNwAkHJMN25T9Efp1n9Tf9vGXhnDXMQYrCNpoRHQTMcZ1s9";
 
     println!("=== PumpFun Transaction Parser ===\n");
     println!("Transaction Signature: {}\n", tx_sig);
@@ -30,8 +31,7 @@ fn main() {
     let client = RpcClient::new(rpc_url);
 
     // 解析签名
-    let signature = Signature::from_str(tx_sig)
-        .expect("Failed to parse signature");
+    let signature = Signature::from_str(tx_sig).expect("Failed to parse signature");
 
     // 使用 sol-parser-sdk 直接解析交易
     println!("\n=== Parsing with sol-parser-sdk ===");

@@ -48,11 +48,11 @@ pub struct BonkTradeEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool_state: Pubkey,      // 32 bytes
-    pub user: Pubkey,             // 32 bytes
-    pub amount_in: u64,           // 8 bytes
-    pub amount_out: u64,          // 8 bytes
-    pub is_buy: bool,             // 1 byte
+    pub pool_state: Pubkey, // 32 bytes
+    pub user: Pubkey,       // 32 bytes
+    pub amount_in: u64,     // 8 bytes
+    pub amount_out: u64,    // 8 bytes
+    pub is_buy: bool,       // 1 byte
 
     // === 非 Borsh 字段（派生字段）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -94,7 +94,7 @@ pub struct PumpFunTradeEvent {
     pub token_amount: u64,
     pub is_buy: bool,
     #[borsh(skip)]
-    pub is_created_buy: bool,  // 由外层逻辑设置，不在 Borsh 数据中
+    pub is_created_buy: bool, // 由外层逻辑设置，不在 Borsh 数据中
     pub user: Pubkey,
     pub timestamp: i64,
     pub virtual_sol_reserves: u64,
@@ -125,7 +125,7 @@ pub struct PumpFunTradeEvent {
     // === 指令账户字段 (从指令账户填充，不在 Borsh 数据中) ===
     // pub global: Pubkey,                  // 0
     #[borsh(skip)]
-    pub bonding_curve: Pubkey,            // 3
+    pub bonding_curve: Pubkey, // 3
     #[borsh(skip)]
     pub associated_bonding_curve: Pubkey, // 4
     // pub associated_user: Pubkey,         // 5
@@ -1399,10 +1399,10 @@ pub struct OrcaWhirlpoolSwapEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub whirlpool: Pubkey,       // 32 bytes
-    pub input_amount: u64,       // 8 bytes
-    pub output_amount: u64,      // 8 bytes
-    pub a_to_b: bool,            // 1 byte
+    pub whirlpool: Pubkey,  // 32 bytes
+    pub input_amount: u64,  // 8 bytes
+    pub output_amount: u64, // 8 bytes
+    pub a_to_b: bool,       // 1 byte
 
     // === 非 Borsh 字段（从日志或其他来源填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1442,10 +1442,10 @@ pub struct OrcaWhirlpoolLiquidityIncreasedEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub whirlpool: Pubkey,       // 32 bytes
-    pub liquidity: u128,         // 16 bytes
-    pub token_a_amount: u64,     // 8 bytes
-    pub token_b_amount: u64,     // 8 bytes
+    pub whirlpool: Pubkey,   // 32 bytes
+    pub liquidity: u128,     // 16 bytes
+    pub token_a_amount: u64, // 8 bytes
+    pub token_b_amount: u64, // 8 bytes
 
     // === 非 Borsh 字段（从日志或其他来源填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1468,10 +1468,10 @@ pub struct OrcaWhirlpoolLiquidityDecreasedEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub whirlpool: Pubkey,       // 32 bytes
-    pub liquidity: u128,         // 16 bytes
-    pub token_a_amount: u64,     // 8 bytes
-    pub token_b_amount: u64,     // 8 bytes
+    pub whirlpool: Pubkey,   // 32 bytes
+    pub liquidity: u128,     // 16 bytes
+    pub token_a_amount: u64, // 8 bytes
+    pub token_b_amount: u64, // 8 bytes
 
     // === 非 Borsh 字段（从日志或其他来源填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1575,9 +1575,9 @@ pub struct MeteoraDammV2SwapEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,            // 32 bytes
-    pub amount_in: u64,          // 8 bytes
-    pub output_amount: u64,      // 8 bytes
+    pub pool: Pubkey,       // 32 bytes
+    pub amount_in: u64,     // 8 bytes
+    pub output_amount: u64, // 8 bytes
 
     // === 非 Borsh 字段（从日志或其他来源填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1623,11 +1623,11 @@ pub struct MeteoraDammV2AddLiquidityEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,              // 32 bytes
-    pub position: Pubkey,          // 32 bytes
-    pub owner: Pubkey,             // 32 bytes
-    pub token_a_amount: u64,       // 8 bytes
-    pub token_b_amount: u64,       // 8 bytes
+    pub pool: Pubkey,        // 32 bytes
+    pub position: Pubkey,    // 32 bytes
+    pub owner: Pubkey,       // 32 bytes
+    pub token_a_amount: u64, // 8 bytes
+    pub token_b_amount: u64, // 8 bytes
 
     // === 非 Borsh 字段（从日志填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1650,11 +1650,11 @@ pub struct MeteoraDammV2RemoveLiquidityEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,              // 32 bytes
-    pub position: Pubkey,          // 32 bytes
-    pub owner: Pubkey,             // 32 bytes
-    pub token_a_amount: u64,       // 8 bytes
-    pub token_b_amount: u64,       // 8 bytes
+    pub pool: Pubkey,        // 32 bytes
+    pub position: Pubkey,    // 32 bytes
+    pub owner: Pubkey,       // 32 bytes
+    pub token_a_amount: u64, // 8 bytes
+    pub token_b_amount: u64, // 8 bytes
 
     // === 非 Borsh 字段（从日志填充）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -1701,17 +1701,17 @@ pub struct MeteoraDlmmSwapEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,        // 32 bytes
-    pub from: Pubkey,        // 32 bytes
-    pub start_bin_id: i32,   // 4 bytes
-    pub end_bin_id: i32,     // 4 bytes
-    pub amount_in: u64,      // 8 bytes
-    pub amount_out: u64,     // 8 bytes
-    pub swap_for_y: bool,    // 1 byte
-    pub fee: u64,            // 8 bytes
-    pub protocol_fee: u64,   // 8 bytes
-    pub fee_bps: u128,       // 16 bytes
-    pub host_fee: u64,       // 8 bytes
+    pub pool: Pubkey,      // 32 bytes
+    pub from: Pubkey,      // 32 bytes
+    pub start_bin_id: i32, // 4 bytes
+    pub end_bin_id: i32,   // 4 bytes
+    pub amount_in: u64,    // 8 bytes
+    pub amount_out: u64,   // 8 bytes
+    pub swap_for_y: bool,  // 1 byte
+    pub fee: u64,          // 8 bytes
+    pub protocol_fee: u64, // 8 bytes
+    pub fee_bps: u128,     // 16 bytes
+    pub host_fee: u64,     // 8 bytes
 }
 
 /// Meteora DLMM Add Liquidity Event
@@ -1722,11 +1722,11 @@ pub struct MeteoraDlmmAddLiquidityEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,          // 32 bytes
-    pub from: Pubkey,          // 32 bytes
-    pub position: Pubkey,      // 32 bytes
-    pub amounts: [u64; 2],     // 16 bytes (2 * 8)
-    pub active_bin_id: i32,    // 4 bytes
+    pub pool: Pubkey,       // 32 bytes
+    pub from: Pubkey,       // 32 bytes
+    pub position: Pubkey,   // 32 bytes
+    pub amounts: [u64; 2],  // 16 bytes (2 * 8)
+    pub active_bin_id: i32, // 4 bytes
 }
 
 /// Meteora DLMM Remove Liquidity Event
@@ -1737,11 +1737,11 @@ pub struct MeteoraDlmmRemoveLiquidityEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,          // 32 bytes
-    pub from: Pubkey,          // 32 bytes
-    pub position: Pubkey,      // 32 bytes
-    pub amounts: [u64; 2],     // 16 bytes (2 * 8)
-    pub active_bin_id: i32,    // 4 bytes
+    pub pool: Pubkey,       // 32 bytes
+    pub from: Pubkey,       // 32 bytes
+    pub position: Pubkey,   // 32 bytes
+    pub amounts: [u64; 2],  // 16 bytes (2 * 8)
+    pub active_bin_id: i32, // 4 bytes
 }
 
 /// Meteora DLMM Initialize Pool Event
@@ -1752,10 +1752,10 @@ pub struct MeteoraDlmmInitializePoolEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,         // 32 bytes
-    pub creator: Pubkey,      // 32 bytes
-    pub active_bin_id: i32,   // 4 bytes
-    pub bin_step: u16,        // 2 bytes
+    pub pool: Pubkey,       // 32 bytes
+    pub creator: Pubkey,    // 32 bytes
+    pub active_bin_id: i32, // 4 bytes
+    pub bin_step: u16,      // 2 bytes
 }
 
 /// Meteora DLMM Initialize Bin Array Event
@@ -1779,11 +1779,11 @@ pub struct MeteoraDlmmCreatePositionEvent {
     pub metadata: EventMetadata,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub pool: Pubkey,       // 32 bytes
-    pub position: Pubkey,   // 32 bytes
-    pub owner: Pubkey,      // 32 bytes
-    pub lower_bin_id: i32,  // 4 bytes
-    pub width: u32,         // 4 bytes
+    pub pool: Pubkey,      // 32 bytes
+    pub position: Pubkey,  // 32 bytes
+    pub owner: Pubkey,     // 32 bytes
+    pub lower_bin_id: i32, // 4 bytes
+    pub width: u32,        // 4 bytes
 }
 
 /// Meteora DLMM Close Position Event
@@ -1820,19 +1820,19 @@ pub struct MeteoraDlmmClaimFeeEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DexEvent {
     // PumpFun 事件
-    PumpFunCreate(PumpFunCreateTokenEvent), // - 已对接
-    PumpFunTrade(PumpFunTradeEvent),        // - 已对接 (统一交易事件，包含所有交易类型)
-    PumpFunBuy(PumpFunTradeEvent),          // - 已对接 (仅买入事件，用于过滤)
-    PumpFunSell(PumpFunTradeEvent),         // - 已对接 (仅卖出事件，用于过滤)
+    PumpFunCreate(PumpFunCreateTokenEvent),  // - 已对接
+    PumpFunTrade(PumpFunTradeEvent),         // - 已对接 (统一交易事件，包含所有交易类型)
+    PumpFunBuy(PumpFunTradeEvent),           // - 已对接 (仅买入事件，用于过滤)
+    PumpFunSell(PumpFunTradeEvent),          // - 已对接 (仅卖出事件，用于过滤)
     PumpFunBuyExactSolIn(PumpFunTradeEvent), // - 已对接 (精确SOL买入事件，用于过滤)
-    PumpFunMigrate(PumpFunMigrateEvent),    // - 已对接
+    PumpFunMigrate(PumpFunMigrateEvent),     // - 已对接
 
     // PumpSwap 事件
-    PumpSwapTrade(PumpSwapTradeEvent),                   // - 已对接 (buy/sell/buy_exact_sol_in)
-    PumpSwapBuy(PumpSwapBuyEvent),                      // - 已对接 (legacy)
-    PumpSwapSell(PumpSwapSellEvent),                    // - 已对接 (legacy)
-    PumpSwapCreatePool(PumpSwapCreatePoolEvent),        // - 已对接
-    PumpSwapLiquidityAdded(PumpSwapLiquidityAdded),     // - 已对接
+    PumpSwapTrade(PumpSwapTradeEvent), // - 已对接 (buy/sell/buy_exact_sol_in)
+    PumpSwapBuy(PumpSwapBuyEvent),     // - 已对接 (legacy)
+    PumpSwapSell(PumpSwapSellEvent),   // - 已对接 (legacy)
+    PumpSwapCreatePool(PumpSwapCreatePoolEvent), // - 已对接
+    PumpSwapLiquidityAdded(PumpSwapLiquidityAdded), // - 已对接
     PumpSwapLiquidityRemoved(PumpSwapLiquidityRemoved), // - 已对接
 
     // Meteora DAMM V2 事件
@@ -1895,7 +1895,7 @@ pub enum DexEvent {
     MeteoraDlmmClaimFee(MeteoraDlmmClaimFeeEvent),
 
     // 账户事件
-    TokenInfo(TokenInfoEvent),  // - 已对接
+    TokenInfo(TokenInfoEvent),       // - 已对接
     TokenAccount(TokenAccountEvent), // - 已对接
     NonceAccount(NonceAccountEvent), // - 已对接
     PumpSwapGlobalConfigAccount(PumpSwapGlobalConfigAccountEvent), // - 已对接

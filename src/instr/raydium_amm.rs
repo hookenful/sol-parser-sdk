@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Raydium AMM V4 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Raydium AMM V4 指令类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,22 +66,27 @@ pub fn parse_instruction(
     match instruction_type {
         RaydiumAmmV4Instruction::SwapBaseIn => {
             parse_swap_base_in_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        RaydiumAmmV4Instruction::SwapBaseOut => {
-            parse_swap_base_out_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        RaydiumAmmV4Instruction::SwapBaseOut => parse_swap_base_out_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         RaydiumAmmV4Instruction::Deposit => {
             parse_deposit_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         RaydiumAmmV4Instruction::Withdraw => {
             parse_withdraw_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         RaydiumAmmV4Instruction::Initialize2 => {
             parse_initialize2_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         RaydiumAmmV4Instruction::WithdrawPnl => {
             parse_withdraw_pnl_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
     }
 }
 
