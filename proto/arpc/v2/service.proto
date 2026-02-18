@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package arpc.v2;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+service Service {
+  rpc SubscribeEntries(SubscribeEntriesRequest) returns (stream SubscribeEntriesResponse) {}
+  rpc SubscribeTransactions(stream SubscribeTransactionsRequest) returns (stream SubscribeTransactionsResponse) {}
+  rpc SubscribeSlots(SubscribeSlotsRequest) returns (stream SubscribeSlotsResponse) {}
+}
+
+message SubscribeEntriesRequest {
+  optional EntryMetadataFilter metadata_filter = 1;
+  optional EntryStreamOptions  stream_options  = 2;
+}
+
+message EntryMetadataFilter {
+  optional uint32 min_transaction_count    = 1;
+  optional uint32 max_transaction_count    = 2;
+  optional uint32 min_signature_count      = 3;
+  optional uint32 max_signature_count      = 4;
+  optional bool   include_tick_entries     = 5;
+  optional bool   include_non_tick_entries = 6;
+}
+
+message EntryStreamOptions {
+  optional bool include_heartbeat_updates = 1;
+}
+
+message SubscribeEntriesResponse {
+  google.protobuf.Timestamp created_at = 1;
+
+  oneof update {
+    Entry      entry     = 2;
+    EntryBatch batch     = 3;
+    Heartbeat  heartbeat = 4;
+    Error      error     = 5;
+  }
+
+  uint64 sequence = 6;
+}
+
+message EntryBatch {
+  repeated Entry entries = 1;
+}
+
+message Heartbeat {
+  uint64 slot = 1;
+}
+
+message SubscribeTransactionsRequest {
+  oneof payload {
+    RegisterTransactionFilters   register_filters   = 1;
+    UnregisterTransactionFilters unregister_filters = 2;
+    Ping                         ping               = 3;
+  }
+}
+
+message RegisterTransactionFilters {
+  repeated TransactionFilter filters = 1;
+}
+
+message UnregisterTransactionFilters {
+  repeated string filter_ids = 1;
+}
+
+message Ping {
+  int32 ping_id = 1;
+}
+
+message TransactionFilter {
+  string                             filter_id = 1;
+  SubscribeRequestFilterTransactions filter    = 2;
+}
+
+message SubscribeSlotsRequest {
+  optional bool include_dead     = 1;
+  optional bool include_complete = 2;
+}
+
+message SubscribeSlotsResponse {
+  SlotUpdate slot     = 1;
+  uint64     sequence = 2;
+}
+
+message SubscribeRequestFilterTransactions {
+  repeated string account_include  = 1;
+  repeated string account_exclude  = 2;
+  repeated string account_required = 3;
+}
+
+message SubscribeTransactionsResponse {
+  google.protobuf.Timestamp created_at = 1;
+
+  oneof payload {
+    TransactionUpdate      transaction_update = 2;
+    Pong                   pong               = 4;
+    Error                  error              = 6;
+    FilterValidationResult filter_validation  = 7;
+  }
+
+  uint64 sequence = 8;
+}
+
+message TransactionUpdate {
+  repeated string            filter_ids  = 1;
+  SubscribeUpdateTransaction transaction = 2;
+}
+
+enum SlotStatus {
+  SLOT_STATUS_UNSPECIFIED = 0;
+  SLOT_STATUS_ALIVE       = 1;
+  SLOT_STATUS_DEAD        = 2;
+  SLOT_STATUS_COMPLETE    = 3;
+}
+
+message SlotUpdate {
+  uint64         slot           = 1;
+  SlotStatus     status         = 2;
+  optional bytes current_leader = 3;
+}
+
+message Pong {
+  int32 ping_id = 1;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED        = 0;
+  ERROR_CODE_UNKNOWN            = 1;
+  ERROR_CODE_INVALID_FILTER     = 2;
+  ERROR_CODE_FILTER_TOO_COMPLEX = 3;
+  ERROR_CODE_RATE_LIMITED       = 4;
+  ERROR_CODE_QUOTA_EXCEEDED     = 5;
+  ERROR_CODE_INTERNAL           = 6;
+  ERROR_CODE_UNAVAILABLE        = 7;
+}
+
+message Error {
+  ErrorCode       code           = 1;
+  string          message        = 2;
+  optional uint32 retry_after_ms = 3;
+}
+
+message FilterValidationResult {
+  string          filter_id        = 1;
+  bool            accepted         = 2;
+  optional string rejection_reason = 3;
+}
+
+message SubscribeUpdateTransaction {
+  uint64      slot        = 1;
+  Transaction transaction = 2;
+  string      signature   = 3;
+}
+
+message Transaction {
+  repeated bytes signatures = 1;
+  Message        message    = 2;
+  bool           is_vote    = 3;
+  bytes          fee_payer  = 4;
+}
+
+message Message {
+  MessageHeader                      header                    = 1;
+  repeated bytes                     account_keys              = 2;
+  bytes                              recent_blockhash          = 3;
+  repeated CompiledInstruction       instructions              = 4;
+  google.protobuf.BoolValue          versioned                 = 5;
+  repeated MessageAddressTableLookup address_table_lookups     = 6;
+  repeated bytes                     loaded_writable_addresses = 7;
+  repeated bytes                     loaded_readonly_addresses = 8;
+}
+
+message MessageHeader {
+  uint32 num_required_signatures        = 1;
+  uint32 num_readonly_signed_accounts   = 2;
+  uint32 num_readonly_unsigned_accounts = 3;
+}
+
+// Serialized instruction extracted from a Solana transaction message.
+message CompiledInstruction {
+  // Index into the account_key list identifying the program id.
+  uint32 program_id_index = 1;
+  // Packed list of account indexes referenced by the instruction.
+  bytes accounts = 2;
+  // Opaque program input data.
+  bytes data = 3;
+}
+
+// Lookup metadata for address table accesses used by versioned messages.
+message MessageAddressTableLookup {
+  // Account key of the address lookup table.
+  bytes account_key = 1;
+  // Indexes of writable keys fetched from the table.
+  bytes writable_indexes = 2;
+  // Indexes of readonly keys fetched from the table.
+  bytes readonly_indexes = 3;
+}
+
+message Entry {
+  uint64          slot              = 1;
+  bytes           data              = 2;
+  optional uint32 transaction_count = 3;
+  optional uint32 signature_count   = 4;
+  bool            tick_only         = 5;
+  SlotStatus      slot_status       = 6;
+  optional bytes  current_leader    = 7;
+  uint32          entry_index       = 8;
+  bool            is_last_in_slot   = 9;
+}

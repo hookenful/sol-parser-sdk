@@ -6,6 +6,7 @@
 //! - 账户和交易过滤
 //! - 多协议支持（PumpFun, Bonk, Raydium等）
 
+pub mod arpc_proto;
 pub mod buffers;
 pub mod client;
 pub mod config;
@@ -17,7 +18,7 @@ pub mod program_ids;
 pub mod types;
 
 // 重新导出主要API
-pub use client::YellowstoneGrpc;
+pub use client::{CorvusArpcV2Client, YellowstoneGrpcClient};
 pub use deduper::TxDeduper;
 pub use types::{
     AccountFilter, ClientConfig, EventType as StreamingEventType, EventTypeFilter, OrderMode,

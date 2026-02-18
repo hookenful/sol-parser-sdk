@@ -7,10 +7,10 @@
 
 use crate::core::{events::*, merger::merge_events};
 use crate::grpc::types::EventTypeFilter;
-use crate::instr::read_pubkey_fast;
+use crate::instr::{read_pubkey_fast, InstructionParseMode};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use yellowstone_grpc_proto::prelude::{Transaction, TransactionStatusMeta};
 
 /// 解析交易中的所有指令事件（instruction + inner instruction）
@@ -37,11 +37,60 @@ pub fn parse_instructions_enhanced(
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
 ) -> Vec<DexEvent> {
+    parse_instructions_enhanced_with_mode(
+        meta,
+        transaction,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        filter,
+        InstructionParseMode::Strict,
+    )
+}
+
+#[inline]
+pub fn parse_instructions_enhanced_logless(
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    filter: Option<&EventTypeFilter>,
+) -> Vec<DexEvent> {
+    parse_instructions_enhanced_with_mode(
+        meta,
+        transaction,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        filter,
+        InstructionParseMode::Logless,
+    )
+}
+
+#[inline]
+fn parse_instructions_enhanced_with_mode(
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    filter: Option<&EventTypeFilter>,
+    parse_mode: InstructionParseMode,
+) -> Vec<DexEvent> {
     let Some(tx) = transaction else { return Vec::new() };
     let Some(msg) = &tx.message else { return Vec::new() };
 
-    // 提前检查：是否需要解析 instruction（根据 filter）
-    if !should_parse_instructions(filter) {
+    // 严格模式下保留原有的提前过滤逻辑
+    if matches!(parse_mode, InstructionParseMode::Strict) && !should_parse_instructions(filter) {
         return Vec::new();
     }
 
@@ -80,6 +129,7 @@ pub fn parse_instructions_enhanced(
             &ix.accounts,
             &get_key,
             filter,
+            parse_mode,
         ) {
             result.push((i, None, event)); // (outer_idx, inner_idx, event)
         }
@@ -131,6 +181,10 @@ pub fn parse_instructions_enhanced(
         final_result.push(event);
     }
 
+    if matches!(parse_mode, InstructionParseMode::Logless) {
+        mark_created_buy_trades(&mut final_result);
+    }
+
     final_result
 }
 
@@ -153,6 +207,7 @@ fn parse_outer_instruction<'a>(
     account_indices: &[u8],
     get_key: &dyn Fn(usize) -> Option<&'a Vec<u8>>,
     filter: Option<&EventTypeFilter>,
+    parse_mode: InstructionParseMode,
 ) -> Option<DexEvent> {
     // 检查指令数据长度（至少8字节 discriminator）
     if data.len() < 8 {
@@ -166,8 +221,8 @@ fn parse_outer_instruction<'a>(
         .collect();
 
     // 调用现有的 instruction 解析器
-    crate::instr::parse_instruction_unified(
-        data, &accounts, sig, slot, tx_idx, block_us, grpc_us, filter, program_id,
+    crate::instr::parse_instruction_unified_with_mode(
+        data, &accounts, sig, slot, tx_idx, block_us, grpc_us, filter, program_id, parse_mode,
     )
 }
 
@@ -262,7 +317,8 @@ fn merge_instruction_events(events: Vec<(usize, Option<usize>, DexEvent)>) -> Ve
 
     // 按 (outer_idx, inner_idx) 排序，确保顺序：outer -> inner
     let mut events = events;
-    events.sort_by_key(|(outer, inner, _)| (*outer, inner.unwrap_or(usize::MAX)));
+    events
+        .sort_by_key(|(outer, inner, _)| (*outer, inner.map(|v| v.saturating_add(1)).unwrap_or(0)));
 
     let mut result = Vec::with_capacity(events.len());
     let mut pending_outer: Option<(usize, DexEvent)> = None;
@@ -328,6 +384,34 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
                 | MeteoraDammV2RemoveLiquidity
         )
     })
+}
+
+#[inline]
+fn mark_created_buy_trades(events: &mut [DexEvent]) {
+    let mut created_mints: HashSet<Pubkey> = HashSet::new();
+    for event in events.iter() {
+        if let DexEvent::PumpFunCreate(create) = event {
+            if create.mint != Pubkey::default() {
+                created_mints.insert(create.mint);
+            }
+        }
+    }
+    if created_mints.is_empty() {
+        return;
+    }
+
+    for event in events.iter_mut() {
+        match event {
+            DexEvent::PumpFunTrade(trade)
+            | DexEvent::PumpFunBuy(trade)
+            | DexEvent::PumpFunBuyExactSolIn(trade) => {
+                if trade.is_buy && created_mints.contains(&trade.mint) {
+                    trade.is_created_buy = true;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

@@ -58,6 +58,7 @@ yellowstone-grpc-client = {  version = "9.0.0" }
 yellowstone-grpc-proto = {  version = "9.0.0" }
 tokio = { version = "1.42.0", features = ["full", "rt-multi-thread"]}
 tonic = { version = "0.14.2", features = ["transport"] }
+tonic-prost = "0.14.2"
 rustls = { version = "0.23.23", features = ["ring"], default-features = false }
 ring = "0.17"
 rustls-native-certs = "0.8.1"
@@ -97,6 +98,11 @@ smallvec = "1.13"  # 零延迟优化：栈分配小数组
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14.2"
+protoc-bin-vendored = "3.1.0"
+
 [profile.release]
 opt-level = 3
 lto = "thin"          # Thin LTO: 快速编译 + 良好优化（2-3分钟 vs 6分钟）
