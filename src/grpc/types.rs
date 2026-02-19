@@ -21,6 +21,14 @@ pub enum OrderMode {
     MicroBatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CommitmentMode {
+    #[default]
+    Processed,
+    Confirmed,
+    Finalized,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// 是否启用性能监控
@@ -45,6 +53,8 @@ pub struct ClientConfig {
     /// MicroBatch 模式下的时间窗口大小（微秒）
     /// 默认 100μs，可根据网络状况调整
     pub micro_batch_us: u64,
+    /// Yellowstone 订阅承诺级别
+    pub commitment: CommitmentMode,
 }
 
 impl Default for ClientConfig {
@@ -63,6 +73,7 @@ impl Default for ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 100,
             micro_batch_us: 100, // 100μs 默认窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 }
@@ -83,6 +94,7 @@ impl ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 50,
             micro_batch_us: 50, // 50μs 更激进的窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 
@@ -101,6 +113,7 @@ impl ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 200,
             micro_batch_us: 200, // 200μs 高吞吐模式
+            commitment: CommitmentMode::Processed,
         }
     }
 }

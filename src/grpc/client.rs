@@ -130,9 +130,7 @@ impl YellowstoneGrpcClient {
         transaction_filters: Vec<TransactionFilter>,
         account_filters: Vec<AccountFilter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner
-            .update_subscription(transaction_filters, account_filters)
-            .await
+        self.inner.update_subscription(transaction_filters, account_filters).await
     }
 
     pub async fn stop(&self) {
@@ -165,7 +163,7 @@ impl CorvusArpcV2Client {
             || endpoint.starts_with("arpc+https://")
         {
             return Err(
-                "CorvusArpcV2Client expects plain http(s) endpoint, not arpc-prefixed URL".into(),
+                "CorvusArpcV2Client expects plain http(s) endpoint, not arpc-prefixed URL".into()
             );
         }
         Ok(Self {
@@ -213,9 +211,7 @@ impl CorvusArpcV2Client {
                     .into(),
             );
         }
-        self.inner
-            .update_subscription(transaction_filters, account_filters)
-            .await
+        self.inner.update_subscription(transaction_filters, account_filters).await
     }
 
     pub async fn stop(&self) {
@@ -298,7 +294,11 @@ impl StreamClient {
 
         match self.backend {
             StreamBackend::Yellowstone => {
-                let request = build_subscribe_request(&transaction_filters, &account_filters);
+                let request = build_subscribe_request(
+                    &transaction_filters,
+                    &account_filters,
+                    self.config.commitment,
+                );
                 let sender = self
                     .yellowstone_control_tx
                     .lock()
@@ -406,7 +406,7 @@ impl StreamClient {
         builder = builder.tcp_nodelay(true).http2_adaptive_window(true);
 
         let mut client = builder.connect().await.map_err(|e| e.to_string())?;
-        let request = build_subscribe_request(&tx_filters, &acc_filters);
+        let request = build_subscribe_request(&tx_filters, &acc_filters, self.config.commitment);
 
         let (subscribe_tx, mut stream) =
             client.subscribe_with_request(Some(request)).await.map_err(|e| e.to_string())?;
@@ -1240,6 +1240,7 @@ fn decode_arpc_signature(signature: &str, signatures: &[Vec<u8>]) -> Vec<u8> {
 fn build_subscribe_request(
     tx_filters: &[TransactionFilter],
     acc_filters: &[AccountFilter],
+    commitment_mode: CommitmentMode,
 ) -> SubscribeRequest {
     let transactions = tx_filters
         .iter()
@@ -1283,10 +1284,18 @@ fn build_subscribe_request(
         blocks: HashMap::new(),
         blocks_meta: HashMap::new(),
         entry: HashMap::new(),
-        commitment: Some(CommitmentLevel::Processed as i32),
+        commitment: Some(commitment_level_from_mode(commitment_mode) as i32),
         accounts_data_slice: Vec::new(),
         ping: None,
         from_slot: None,
+    }
+}
+
+fn commitment_level_from_mode(mode: CommitmentMode) -> CommitmentLevel {
+    match mode {
+        CommitmentMode::Processed => CommitmentLevel::Processed,
+        CommitmentMode::Confirmed => CommitmentLevel::Confirmed,
+        CommitmentMode::Finalized => CommitmentLevel::Finalized,
     }
 }
 

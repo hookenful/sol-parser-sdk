@@ -21,8 +21,8 @@ pub mod types;
 pub use client::{CorvusArpcV2Client, YellowstoneGrpcClient};
 pub use deduper::TxDeduper;
 pub use types::{
-    AccountFilter, ClientConfig, EventType as StreamingEventType, EventTypeFilter, OrderMode,
-    Protocol, SlotFilter, TransactionFilter,
+    AccountFilter, ClientConfig, CommitmentMode, EventType as StreamingEventType, EventTypeFilter,
+    OrderMode, Protocol, SlotFilter, TransactionFilter,
 };
 
 // 事件解析器重新导出
