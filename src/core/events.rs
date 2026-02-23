@@ -95,6 +95,8 @@ pub struct PumpFunTradeEvent {
     pub is_buy: bool,
     #[borsh(skip)]
     pub is_created_buy: bool, // 由外层逻辑设置，不在 Borsh 数据中
+    #[borsh(skip)]
+    pub create_has_socials: Option<bool>, // 由同交易 create 事件补充，不在 Borsh 数据中
     pub user: Pubkey,
     pub timestamp: i64,
     pub virtual_sol_reserves: u64,

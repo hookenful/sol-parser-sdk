@@ -153,8 +153,6 @@ pub fn parse_rpc_transaction(
     );
 
     // Parse logs (for protocols like PumpFun that emit events in logs)
-    let mut is_created_buy = false;
-
     for log in &grpc_meta.log_messages {
         if let Some(mut event) = crate::logs::parse_log(
             log,
@@ -164,13 +162,8 @@ pub fn parse_rpc_transaction(
             block_time_us,
             grpc_recv_us,
             filter,
-            is_created_buy,
+            false,
         ) {
-            // Check if this is a PumpFun create event to set is_created_buy flag
-            if matches!(event, DexEvent::PumpFunCreate(_)) {
-                is_created_buy = true;
-            }
-
             // Fill account fields - use same function as gRPC parsing
             crate::core::account_dispatcher::fill_accounts_from_transaction_data(
                 &mut event,

@@ -10,7 +10,7 @@ use crate::grpc::types::EventTypeFilter;
 use crate::instr::{read_pubkey_fast, InstructionParseMode};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use yellowstone_grpc_proto::prelude::{Transaction, TransactionStatusMeta};
 
 /// 解析交易中的所有指令事件（instruction + inner instruction）
@@ -179,10 +179,6 @@ fn parse_instructions_enhanced_with_mode(
         );
         crate::core::common_filler::fill_data(&mut event, meta, transaction, &invokes_str);
         final_result.push(event);
-    }
-
-    if matches!(parse_mode, InstructionParseMode::Logless) {
-        mark_created_buy_trades(&mut final_result);
     }
 
     final_result
@@ -386,34 +382,6 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
     })
 }
 
-#[inline]
-fn mark_created_buy_trades(events: &mut [DexEvent]) {
-    let mut created_mints: HashSet<Pubkey> = HashSet::new();
-    for event in events.iter() {
-        if let DexEvent::PumpFunCreate(create) = event {
-            if create.mint != Pubkey::default() {
-                created_mints.insert(create.mint);
-            }
-        }
-    }
-    if created_mints.is_empty() {
-        return;
-    }
-
-    for event in events.iter_mut() {
-        match event {
-            DexEvent::PumpFunTrade(trade)
-            | DexEvent::PumpFunBuy(trade)
-            | DexEvent::PumpFunBuyExactSolIn(trade) => {
-                if trade.is_buy && created_mints.contains(&trade.mint) {
-                    trade.is_created_buy = true;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,4 +456,5 @@ mod tests {
             panic!("Expected PumpFunTrade event");
         }
     }
+
 }
