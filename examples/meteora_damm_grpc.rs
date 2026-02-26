@@ -45,17 +45,19 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Order Mode: {:?} (ultra-low latency)", config.order_mode);
     println!();
 
-    // Get gRPC endpoint from environment or use default
-    let grpc_endpoint = std::env::var("GRPC_ENDPOINT")
-        .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string());
+    // publicnode gRPC 需要 token；endpoint/token 可由环境变量覆盖
+    const GRPC_ENDPOINT_DEFAULT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
+    const GRPC_AUTH_TOKEN_DEFAULT: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    let grpc_endpoint = std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| GRPC_ENDPOINT_DEFAULT.to_string());
+    let grpc_token = Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN_DEFAULT.to_string()));
 
-    let grpc = YellowstoneGrpc::new_with_config(grpc_endpoint.clone(), None, config)?;
+    let grpc = YellowstoneGrpc::new_with_config(grpc_endpoint.clone(), grpc_token, config)?;
 
     println!("✅ gRPC client created (parser pre-warmed)");
     println!("📡 Endpoint: {}", grpc_endpoint);
 
-    // Monitor only Meteora DAMM protocol
-    let protocols = vec![Protocol::MeteoraDamm];
+    // Monitor only Meteora DAMM V2 protocol
+    let protocols = vec![Protocol::MeteoraDammV2];
     println!("📊 Protocols: {:?}", protocols);
 
     let transaction_filter = TransactionFilter::for_protocols(&protocols);
@@ -63,30 +65,22 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
 
     // ========== Event Type Filter Examples ==========
     //
-    // Example 1: Subscribe to Swap events only (V1)
-    // let event_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDammSwap]);
+    // Example 1: Subscribe to Swap events only (V2)
+    // let event_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDammV2Swap]);
     //
-    // Example 2: Subscribe to Swap2 events only (V2)
-    // let event_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDammSwap2]);
-    //
-    // Example 3: Subscribe to all Swap events (V1 + V2)
+    // Example 2: Subscribe to liquidity events only (V2)
     // let event_filter = EventTypeFilter::include_only(vec![
-    //     EventType::MeteoraDammSwap,
-    //     EventType::MeteoraDammSwap2,
-    // ]);
-    //
-    // Example 4: Subscribe to liquidity events only
-    // let event_filter = EventTypeFilter::include_only(vec![
-    //     EventType::MeteoraDammAddLiquidity,
-    //     EventType::MeteoraDammRemoveLiquidity,
+    //     EventType::MeteoraDammV2AddLiquidity,
+    //     EventType::MeteoraDammV2RemoveLiquidity,
     // ]);
 
-    // Default: Subscribe to all Meteora DAMM event types
+    // Default: Subscribe to all Meteora DAMM V2 event types
     let event_filter = EventTypeFilter::include_only(vec![
-        EventType::MeteoraDammSwap,
-        EventType::MeteoraDammSwap2,
-        EventType::MeteoraDammAddLiquidity,
-        EventType::MeteoraDammRemoveLiquidity,
+        EventType::MeteoraDammV2Swap,
+        EventType::MeteoraDammV2AddLiquidity,
+        EventType::MeteoraDammV2RemoveLiquidity,
+        EventType::MeteoraDammV2CreatePosition,
+        EventType::MeteoraDammV2ClosePosition,
     ]);
 
     println!("🎯 Event Filter: Swap, Swap2, AddLiquidity, RemoveLiquidity");
@@ -99,10 +93,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     // Statistics
     let mut event_count = 0u64;
     let mut swap_count = 0u64;
-    let mut swap2_count = 0u64;
+    let swap2_count = 0u64; // reserved for future V1/V2 split
     let mut add_liquidity_count = 0u64;
     let mut remove_liquidity_count = 0u64;
-    let mut total_latency_us = 0i64;
 
     // High-performance event consumer
     tokio::spawn(async move {
@@ -117,52 +110,12 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                 let now_us = now_micros();
 
                 match &event {
-                    DexEvent::MeteoraDammV1Swap(e) => {
+                    DexEvent::MeteoraDammV2Swap(e) => {
                         swap_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        total_latency_us += latency_us;
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🔄 Meteora DAMM SWAP (V1) #{}", event_count);
-                        println!("├─────────────────────────────────────────────────────────────");
-                        println!("│ Signature  : {}", e.metadata.signature);
-                        println!(
-                            "│ Slot       : {} | TxIndex: {}",
-                            e.metadata.slot, e.metadata.tx_index
-                        );
-                        println!("├─────────────────────────────────────────────────────────────");
-                        println!("│ Pool       : {}", e.pool);
-                        println!(
-                            "│ Direction  : {}",
-                            if e.trade_direction == 0 { "A→B" } else { "B→A" }
-                        );
-                        println!("│ Amount In  : {}", e.amount_in);
-                        println!("│ Amount Out : {}", e.output_amount);
-                        println!("│ LP Fee     : {}", e.lp_fee);
-                        println!("│ Protocol   : {}", e.protocol_fee);
-                        println!("│ Partner    : {}", e.partner_fee);
-                        println!(
-                            "│ Referral   : {} (has_referral: {})",
-                            e.referral_fee, e.has_referral
-                        );
-                        println!("├─────────────────────────────────────────────────────────────");
-                        println!("│ 📊 Latency : {} μs", latency_us);
-                        println!(
-                            "│ 📊 Stats   : Swap={} Swap2={} AddLiq={} RemLiq={}",
-                            swap_count, swap2_count, add_liquidity_count, remove_liquidity_count
-                        );
-                        println!(
-                            "└─────────────────────────────────────────────────────────────\n"
-                        );
-                    }
-
-                    DexEvent::MeteoraDammV2Swap(e) => {
-                        swap2_count += 1;
-                        let latency_us = now_us - e.metadata.grpc_recv_us;
-                        total_latency_us += latency_us;
-
-                        println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🔄 Meteora DAMM SWAP2 (V2) #{}", event_count);
+                        println!("│ 🔄 Meteora DAMM SWAP (V2) #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
                         println!(
@@ -197,13 +150,12 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
 
-                    DexEvent::MeteoraDammAddLiquidity(e) => {
+                    DexEvent::MeteoraDammV2AddLiquidity(e) => {
                         add_liquidity_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        total_latency_us += latency_us;
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ ➕ Meteora DAMM ADD LIQUIDITY #{}", event_count);
+                        println!("│ ➕ Meteora DAMM ADD LIQUIDITY (V2) #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
                         println!(
@@ -212,9 +164,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
+                        println!("│ Position   : {}", e.position);
                         println!("│ Token A In : {}", e.token_a_amount);
                         println!("│ Token B In : {}", e.token_b_amount);
-                        println!("│ LP Minted  : {}", e.lp_mint_amount);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!(
@@ -226,13 +178,12 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
 
-                    DexEvent::MeteoraDammRemoveLiquidity(e) => {
+                    DexEvent::MeteoraDammV2RemoveLiquidity(e) => {
                         remove_liquidity_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        total_latency_us += latency_us;
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ ➖ Meteora DAMM REMOVE LIQUIDITY #{}", event_count);
+                        println!("│ ➖ Meteora DAMM REMOVE LIQUIDITY (V2) #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
                         println!(
@@ -241,9 +192,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {}", e.pool);
+                        println!("│ Position   : {}", e.position);
                         println!("│ Token A Out: {}", e.token_a_amount);
                         println!("│ Token B Out: {}", e.token_b_amount);
-                        println!("│ LP Burned  : {}", e.lp_unmint_amount);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!(

@@ -85,13 +85,29 @@ sol-parser-sdk = { path = "../sol-parser-sdk" }
 sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, features = ["parse-zero-copy"] }
 ```
 
+### Use crates.io
+
+```toml
+# Add to your Cargo.toml
+sol-parser-sdk = "0.2.2"
+```
+
+Or with the zero-copy parser (maximum performance):
+
+```toml
+sol-parser-sdk = { version = "0.2.2", default-features = false, features = ["parse-zero-copy"] }
+```
+
 ### Performance Testing
 
 Test parsing latency with the optimized examples:
 
 ```bash
-# PumpFun with detailed metrics
+# PumpFun with detailed metrics (per-event + 10s stats)
 cargo run --example pumpfun_with_metrics --release
+
+# PumpSwap with detailed metrics (per-event + 10s stats)
+cargo run --example pumpswap_with_metrics --release
 
 # PumpSwap ultra-low latency test
 cargo run --example pumpswap_low_latency --release
@@ -108,24 +124,32 @@ cargo run --example pumpswap_ordered --release
 ### Examples
 
 | Example | Description | Command |
-|---------|-------------|----------|
-| **PumpFun Examples** |
+|---------|-------------|---------|
+| **PumpFun** | | |
 | `pumpfun_with_metrics` | PumpFun event parsing with detailed performance metrics | `cargo run --example pumpfun_with_metrics --release` |
-| `pumpfun_trade_filter` | PumpFun trade type filtering (Buy/Sell/BuyExactSolIn) - Unordered | `cargo run --example pumpfun_trade_filter --release` |
+| `pumpfun_trade_filter` | PumpFun trade type filtering (Buy/Sell/BuyExactSolIn), Unordered mode | `cargo run --example pumpfun_trade_filter --release` |
 | `pumpfun_trade_filter_ordered` | PumpFun trade filtering with StreamingOrdered mode | `cargo run --example pumpfun_trade_filter_ordered --release` |
-| `pumpfun_quick_test` | Quick PumpFun connection test (receives first 10 events) | `cargo run --example pumpfun_quick_test --release` |
-| `parse_pump_tx` | Parse specific PumpFun transaction from RPC | `TX_SIGNATURE=<sig> cargo run --example parse_pump_tx --release` |
-| `debug_pump_tx` | Debug PumpFun transaction parsing | `cargo run --example debug_pump_tx --release` |
-| **PumpSwap Examples** |
-| `pumpswap_low_latency` | PumpSwap ultra-low latency testing (Unordered, full event data) | `cargo run --example pumpswap_low_latency --release` |
+| `pumpfun_quick_test` | Quick PumpFun connection test (first 10 events) | `cargo run --example pumpfun_quick_test --release` |
+| `parse_pump_tx` | Parse a PumpFun transaction from RPC by signature | `TX_SIGNATURE=<sig> cargo run --example parse_pump_tx --release` |
+| `debug_pump_tx` | Debug PumpFun transaction structure and inner instructions | `cargo run --example debug_pump_tx --release` |
+| **PumpSwap** | | |
+| `pumpswap_with_metrics` | PumpSwap events with per-event and 10s performance stats | `cargo run --example pumpswap_with_metrics --release` |
+| `pumpswap_low_latency` | PumpSwap ultra-low latency (Unordered, full event data) | `cargo run --example pumpswap_low_latency --release` |
 | `pumpswap_ordered` | PumpSwap Buy/Sell/CreatePool with MicroBatch ordering | `cargo run --example pumpswap_ordered --release` |
-| `parse_pumpswap_tx` | Parse specific PumpSwap transaction from RPC | `TX_SIGNATURE=<sig> cargo run --example parse_pumpswap_tx --release` |
-| `debug_pumpswap_tx` | Debug PumpSwap transaction parsing | `cargo run --example debug_pumpswap_tx --release` |
-| **Meteora DAMM Examples** |
-| `meteora_damm_grpc` | Meteora DAMM gRPC streaming (Swap/Swap2/AddLiquidity/RemoveLiquidity) | `cargo run --example meteora_damm_grpc --release` |
-| `parse_meteora_damm_tx` | Parse specific Meteora DAMM transaction from RPC | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` |
-| **Utility Examples** |
-| `dynamic_subscription` | Dynamic filter updates without reconnecting | `cargo run --example dynamic_subscription --release` |
+| `parse_pumpswap_tx` | Parse a PumpSwap transaction from RPC by signature | `TX_SIGNATURE=<sig> cargo run --example parse_pumpswap_tx --release` |
+| `debug_pumpswap_tx` | Debug PumpSwap transaction and gRPC conversion | `cargo run --example debug_pumpswap_tx --release` |
+| **Meteora DAMM** | | |
+| `meteora_damm_grpc` | Meteora DAMM V2 gRPC (Swap/AddLiquidity/RemoveLiquidity/CreatePosition/ClosePosition) | `cargo run --example meteora_damm_grpc --release` |
+| `parse_meteora_damm_tx` | Parse a Meteora DAMM transaction from RPC by signature | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` |
+| **Account subscription** | | |
+| `token_balance_listen` | Subscribe to a single token account balance updates | `TOKEN_ACCOUNT=<pubkey> cargo run --example token_balance_listen --release` |
+| `nonce_listen` | Subscribe to a nonce account state changes | `NONCE_ACCOUNT=<pubkey> cargo run --example nonce_listen --release` |
+| `token_decimals_listen` | Subscribe to a mint account (TokenInfo: decimals/supply) | `MINT_ACCOUNT=<pubkey> cargo run --example token_decimals_listen --release` |
+| `pumpswap_pool_account_listen` | Subscribe to PumpSwap pool accounts via memcmp (e.g. mint at offset 32) | `cargo run --example pumpswap_pool_account_listen --release` |
+| `mint_all_ata_account_listen` | Subscribe to all ATAs for one or more mints (memcmp offset 0) | `cargo run --example mint_all_ata_account_listen --release` |
+| **Utility** | | |
+| `dynamic_subscription` | Update transaction/account filters at runtime without reconnecting | `cargo run --example dynamic_subscription --release` |
+| `test_account_filling` | Debug account filling for PumpSwap (RPC + account resolution) | `cargo run --example test_account_filling --release` |
 
 ### Basic Usage
 

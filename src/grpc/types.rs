@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use yellowstone_grpc_proto::geyser::SubscribeRequestFilterAccountsFilter;
+use yellowstone_grpc_proto::geyser::{
+    subscribe_request_filter_accounts_filter::Filter as AccountsFilterOneof,
+    subscribe_request_filter_accounts_filter_memcmp::Data as MemcmpDataOneof,
+    SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
+};
 
 /// 事件输出顺序模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -201,6 +205,18 @@ impl AccountFilter {
 impl Default for AccountFilter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Build a memcmp account filter for use in `AccountFilter::filters`.
+/// ATA accounts have mint at offset 0; PumpSwap pool accounts often use offset 32 for mint/pubkey.
+#[inline]
+pub fn account_filter_memcmp(offset: u64, bytes: Vec<u8>) -> SubscribeRequestFilterAccountsFilter {
+    SubscribeRequestFilterAccountsFilter {
+        filter: Some(AccountsFilterOneof::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+            offset,
+            data: Some(MemcmpDataOneof::Bytes(bytes)),
+        })),
     }
 }
 

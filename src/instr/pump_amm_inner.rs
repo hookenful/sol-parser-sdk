@@ -117,15 +117,8 @@ fn parse_buy_inner(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
 #[cfg(feature = "parse-borsh")]
 #[inline(always)]
 fn parse_buy_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
-    // PumpSwap Buy事件完整数据结构 (385 bytes total)
-    const BUY_EVENT_SIZE: usize = 385;
-
-    if data.len() < BUY_EVENT_SIZE {
-        return None;
-    }
-
-    // 使用 Borsh 反序列化完整的事件数据
-    let event = borsh::from_slice::<PumpSwapBuyEvent>(&data[..BUY_EVENT_SIZE]).ok()?;
+    // PumpSwap BuyEvent 含可变长度 ix_name 及 cashback 字段，反序列化整段 data
+    let event = borsh::from_slice::<PumpSwapBuyEvent>(data).ok()?;
 
     // 设置 metadata
     Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent { metadata, ..event }))
@@ -236,6 +229,38 @@ fn parse_buy_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<Dex
         let current_sol_volume = read_u64_unchecked(data, offset);
         offset += 8;
         let last_update_timestamp = read_i64_unchecked(data, offset);
+        offset += 8;
+
+        // min_base_amount_out, ix_name (variable), cashback_fee_basis_points, cashback
+        let min_base_amount_out = if offset + 8 <= data.len() {
+            let v = read_u64_unchecked(data, offset);
+            offset += 8;
+            v
+        } else {
+            0
+        };
+        let ix_name = if offset + 4 <= data.len() {
+            if let Some((s, consumed)) = unsafe { inner_common::read_string_unchecked(data, offset) } {
+                offset += consumed;
+                s
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        let cashback_fee_basis_points = if offset + 8 <= data.len() {
+            let v = read_u64_unchecked(data, offset);
+            offset += 8;
+            v
+        } else {
+            0
+        };
+        let cashback = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
 
         Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent {
             metadata,
@@ -267,6 +292,10 @@ fn parse_buy_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<Dex
             total_claimed_tokens,
             current_sol_volume,
             last_update_timestamp,
+            min_base_amount_out,
+            ix_name,
+            cashback_fee_basis_points,
+            cashback,
             ..Default::default()
         }))
     }
@@ -298,8 +327,8 @@ fn parse_sell_inner(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
 #[cfg(feature = "parse-borsh")]
 #[inline(always)]
 fn parse_sell_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
-    // PumpSwap Sell事件完整数据结构 (352 bytes total)
-    const SELL_EVENT_SIZE: usize = 352;
+    // PumpSwap SellEvent 含 cashback_fee_basis_points, cashback (368 bytes 固定部分)
+    const SELL_EVENT_SIZE: usize = 368;
 
     if data.len() < SELL_EVENT_SIZE {
         return None;
@@ -346,9 +375,11 @@ fn parse_sell_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<De
     // coin_creator: Pubkey (32)
     // coin_creator_fee_basis_points: u64 (8)
     // coin_creator_fee: u64 (8)
+    // cashback_fee_basis_points: u64 (8)
+    // cashback: u64 (8)
 
     unsafe {
-        const MIN_SIZE: usize = 8 * 16 + 32 * 7;
+        const MIN_SIZE: usize = 8 * 16 + 32 * 7 + 8 + 8; // 368
         if !check_length(data, MIN_SIZE) {
             return None;
         }
@@ -404,6 +435,10 @@ fn parse_sell_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<De
         let coin_creator_fee_basis_points = read_u64_unchecked(data, offset);
         offset += 8;
         let coin_creator_fee = read_u64_unchecked(data, offset);
+        offset += 8;
+        let cashback_fee_basis_points = read_u64_unchecked(data, offset);
+        offset += 8;
+        let cashback = read_u64_unchecked(data, offset);
 
         Some(DexEvent::PumpSwapSell(PumpSwapSellEvent {
             metadata,
@@ -430,6 +465,8 @@ fn parse_sell_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<De
             coin_creator,
             coin_creator_fee_basis_points,
             coin_creator_fee,
+            cashback_fee_basis_points,
+            cashback,
             is_pump_pool: true,
             ..Default::default()
         }))

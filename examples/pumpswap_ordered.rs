@@ -44,9 +44,11 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!("   算法: 极短时间窗口内收集事件，窗口结束后排序释放");
     println!();
 
+    const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
+    const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
-        "https://solana-yellowstone-grpc.publicnode.com:443".to_string(),
-        None,
+        GRPC_ENDPOINT.to_string(),
+        Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),
         config,
     )?;
 

@@ -162,14 +162,6 @@ unsafe fn read_pubkey_unchecked(data: &[u8], offset: usize) -> Pubkey {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use std::arch::aarch64::_prefetch;
-        if offset + 64 < data.len() {
-            _prefetch(data.as_ptr().add(offset + 32), _MM_HINT_T0);
-        }
-    }
-
     let ptr = data.as_ptr().add(offset);
     let mut bytes = [0u8; 32];
     std::ptr::copy_nonoverlapping(ptr, bytes.as_mut_ptr(), 32);
@@ -316,12 +308,26 @@ fn parse_buy_event_optimized(
             if offset + len <= data.len() {
                 let string_bytes = &data[offset..offset + len];
                 let s = std::str::from_utf8_unchecked(string_bytes);
+                offset += len;
                 s.to_string()
             } else {
                 String::new()
             }
         } else {
             String::new()
+        };
+
+        // BuyEvent 新增字段 (PUMP_CASHBACK_README): cashback_fee_basis_points, cashback
+        let cashback_fee_basis_points = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
+        offset += 8;
+        let cashback = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
         };
 
         let metadata = EventMetadata {
@@ -364,6 +370,8 @@ fn parse_buy_event_optimized(
             last_update_timestamp,
             min_base_amount_out,
             ix_name,
+            cashback_fee_basis_points,
+            cashback,
             ..Default::default()
         }))
     }
@@ -379,8 +387,8 @@ fn parse_sell_event_optimized(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // 一次性边界检查 (13个u64 + 1个i64 + 7个Pubkey)
-    const REQUIRED_LEN: usize = 13 * 8 + 8 + 7 * 32;
+    // 一次性边界检查 (13个u64 + 1个i64 + 7个Pubkey + 2个u64 cashback 字段)
+    const REQUIRED_LEN: usize = 13 * 8 + 8 + 7 * 32 + 8 + 8;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -411,6 +419,9 @@ fn parse_sell_event_optimized(
 
         let coin_creator_fee_basis_points = read_u64_unchecked(data, 336);
         let coin_creator_fee = read_u64_unchecked(data, 344);
+        // SellEvent 新增字段 (PUMP_CASHBACK_README): cashback_fee_basis_points, cashback
+        let cashback_fee_basis_points = read_u64_unchecked(data, 352);
+        let cashback = read_u64_unchecked(data, 360);
 
         let metadata = EventMetadata {
             signature,
@@ -445,6 +456,8 @@ fn parse_sell_event_optimized(
             coin_creator,
             coin_creator_fee_basis_points,
             coin_creator_fee,
+            cashback_fee_basis_points,
+            cashback,
             ..Default::default()
         }))
     }
@@ -460,8 +473,8 @@ fn parse_create_pool_event_optimized(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // 一次性边界检查
-    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1;
+    // 一次性边界检查 (含 IDL 最后一列 is_mayhem_mode: bool)
+    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1 + 1;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -492,6 +505,7 @@ fn parse_create_pool_event_optimized(
         let user_base_token_account = read_pubkey_unchecked(data, 229);
         let user_quote_token_account = read_pubkey_unchecked(data, 261);
         let coin_creator = read_pubkey_unchecked(data, 293);
+        let is_mayhem_mode = read_bool_unchecked(data, 325);
 
         let metadata = EventMetadata {
             signature,
@@ -523,6 +537,7 @@ fn parse_create_pool_event_optimized(
             user_base_token_account,
             user_quote_token_account,
             coin_creator,
+            is_mayhem_mode,
         }))
     }
 }
@@ -875,6 +890,7 @@ pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Opti
         let user_base_token_account = read_pubkey_unchecked(data, 229);
         let user_quote_token_account = read_pubkey_unchecked(data, 261);
         let coin_creator = read_pubkey_unchecked(data, 293);
+        let is_mayhem_mode = data.len() > 325 && read_bool_unchecked(data, 325);
 
         Some(DexEvent::PumpSwapCreatePool(PumpSwapCreatePoolEvent {
             metadata,
@@ -898,6 +914,7 @@ pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Opti
             user_base_token_account,
             user_quote_token_account,
             coin_creator,
+            is_mayhem_mode,
         }))
     }
 }

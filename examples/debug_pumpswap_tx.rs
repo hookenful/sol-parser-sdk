@@ -100,7 +100,7 @@ fn main() {
                     vec![]
                 };
 
-            for (idx, inner_group) in inner.iter().enumerate() {
+            for (_idx, inner_group) in inner.iter().enumerate() {
                 println!(
                     "\nOuter instruction #{}, {} inner instructions:",
                     inner_group.index,
@@ -161,7 +161,7 @@ fn main() {
         let versioned_tx: solana_sdk::transaction::VersionedTransaction =
             bincode::deserialize(&bytes).unwrap();
 
-        let msg = match &versioned_tx.message {
+        let _msg = match &versioned_tx.message {
             solana_sdk::message::VersionedMessage::Legacy(m) => {
                 println!("Message type: Legacy");
                 println!("Account keys: {}", m.account_keys.len());
@@ -301,21 +301,15 @@ fn main() {
     }
 }
 
-// Helper function to expose conversion for debugging
+/// Helper function to expose conversion for debugging.
+#[allow(dead_code)]
 fn convert_rpc_to_grpc_debug(
     rpc_tx: &solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta,
-) -> Result<
-    (
-        yellowstone_grpc_proto::prelude::TransactionStatusMeta,
-        yellowstone_grpc_proto::prelude::Transaction,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    use base64::Engine as _;
-    use sol_parser_sdk::rpc_parser::ParseError;
+) -> Result<(yellowstone_grpc_proto::prelude::TransactionStatusMeta,
+             yellowstone_grpc_proto::prelude::Transaction), Box<dyn std::error::Error>> {
     use yellowstone_grpc_proto::prelude::*;
 
-    let rpc_meta = rpc_tx.transaction.meta.as_ref().ok_or("No meta")?;
+    let _rpc_meta = rpc_tx.transaction.meta.as_ref().ok_or("No meta")?;
 
     // This is a simplified version - just for debugging
     Ok((TransactionStatusMeta::default(), Transaction::default()))

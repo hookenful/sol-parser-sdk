@@ -69,29 +69,9 @@ fn main() {
         println!("=== Parsed Events ===\n");
         for (i, event) in events.iter().enumerate() {
             match event {
-                DexEvent::MeteoraDammV1Swap(e) => {
-                    println!("┌─────────────────────────────────────────────────────────────");
-                    println!("│ Event #{}: 🔄 Meteora DAMM SWAP (V1)", i + 1);
-                    println!("├─────────────────────────────────────────────────────────────");
-                    println!("│ Pool       : {}", e.pool);
-                    println!(
-                        "│ Direction  : {}",
-                        if e.trade_direction == 0 { "A→B" } else { "B→A" }
-                    );
-                    println!("│ Amount In  : {}", e.amount_in);
-                    println!("│ Amount Out : {}", e.output_amount);
-                    println!("│ LP Fee     : {}", e.lp_fee);
-                    println!("│ Protocol   : {}", e.protocol_fee);
-                    println!("│ Partner    : {}", e.partner_fee);
-                    println!(
-                        "│ Referral   : {} (has_referral: {})",
-                        e.referral_fee, e.has_referral
-                    );
-                    println!("└─────────────────────────────────────────────────────────────\n");
-                }
                 DexEvent::MeteoraDammV2Swap(e) => {
                     println!("┌─────────────────────────────────────────────────────────────");
-                    println!("│ Event #{}: 🔄 Meteora DAMM SWAP2 (V2)", i + 1);
+                    println!("│ Event #{}: 🔄 Meteora DAMM SWAP (V2)", i + 1);
                     println!("├─────────────────────────────────────────────────────────────");
                     println!("│ Pool       : {}", e.pool);
                     println!(
@@ -111,24 +91,42 @@ fn main() {
                     println!("│ Sqrt Price : {}", e.next_sqrt_price);
                     println!("└─────────────────────────────────────────────────────────────\n");
                 }
-                DexEvent::MeteoraDammAddLiquidity(e) => {
+                DexEvent::MeteoraDammV2AddLiquidity(e) => {
                     println!("┌─────────────────────────────────────────────────────────────");
-                    println!("│ Event #{}: ➕ Meteora DAMM ADD LIQUIDITY", i + 1);
+                    println!("│ Event #{}: ➕ Meteora DAMM ADD LIQUIDITY (V2)", i + 1);
                     println!("├─────────────────────────────────────────────────────────────");
                     println!("│ Pool       : {}", e.pool);
+                    println!("│ Position   : {}", e.position);
                     println!("│ Token A In : {}", e.token_a_amount);
                     println!("│ Token B In : {}", e.token_b_amount);
-                    println!("│ LP Minted  : {}", e.lp_mint_amount);
                     println!("└─────────────────────────────────────────────────────────────\n");
                 }
-                DexEvent::MeteoraDammRemoveLiquidity(e) => {
+                DexEvent::MeteoraDammV2RemoveLiquidity(e) => {
                     println!("┌─────────────────────────────────────────────────────────────");
-                    println!("│ Event #{}: ➖ Meteora DAMM REMOVE LIQUIDITY", i + 1);
+                    println!("│ Event #{}: ➖ Meteora DAMM REMOVE LIQUIDITY (V2)", i + 1);
                     println!("├─────────────────────────────────────────────────────────────");
                     println!("│ Pool       : {}", e.pool);
+                    println!("│ Position   : {}", e.position);
                     println!("│ Token A Out: {}", e.token_a_amount);
                     println!("│ Token B Out: {}", e.token_b_amount);
-                    println!("│ LP Burned  : {}", e.lp_unmint_amount);
+                    println!("└─────────────────────────────────────────────────────────────\n");
+                }
+                DexEvent::MeteoraDammV2CreatePosition(e) => {
+                    println!("┌─────────────────────────────────────────────────────────────");
+                    println!("│ Event #{}: 📍 Meteora DAMM CREATE POSITION (V2)", i + 1);
+                    println!("├─────────────────────────────────────────────────────────────");
+                    println!("│ Pool       : {}", e.pool);
+                    println!("│ Position   : {}", e.position);
+                    println!("│ Owner      : {}", e.owner);
+                    println!("└─────────────────────────────────────────────────────────────\n");
+                }
+                DexEvent::MeteoraDammV2ClosePosition(e) => {
+                    println!("┌─────────────────────────────────────────────────────────────");
+                    println!("│ Event #{}: 📍 Meteora DAMM CLOSE POSITION (V2)", i + 1);
+                    println!("├─────────────────────────────────────────────────────────────");
+                    println!("│ Pool       : {}", e.pool);
+                    println!("│ Position   : {}", e.position);
+                    println!("│ Owner      : {}", e.owner);
                     println!("└─────────────────────────────────────────────────────────────\n");
                 }
                 _ => {
@@ -144,7 +142,7 @@ fn main() {
     println!("  - Direct parsing from RPC (no gRPC streaming needed)");
     println!("  - Inner instruction parsing (16-byte discriminators)");
     println!("  - All 10 DEX protocols (including Meteora DAMM)");
-    println!("  - Meteora DAMM V1 and V2 events (Swap, Swap2, AddLiquidity, RemoveLiquidity)");
+    println!("  - Meteora DAMM V2 events (Swap, AddLiquidity, RemoveLiquidity, CreatePosition, ClosePosition)");
     println!("  - Perfect for testing and validation");
 
     println!("\n✓ Example completed!");

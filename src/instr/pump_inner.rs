@@ -122,14 +122,18 @@ unsafe fn read_u32_unchecked(data: &[u8], offset: usize) -> u32 {
 ///
 /// # 返回
 /// 解析成功返回 `Some(DexEvent)`，否则返回 `None`
+///
+/// # is_created_buy
+/// 当同笔交易内存在 PumpFun create 时由外层传入 true，表示创建者首次买入，与 log 解析行为一致
 #[inline]
 pub fn parse_pumpfun_inner_instruction(
     discriminator: &[u8; 16],
     data: &[u8],
     metadata: EventMetadata,
+    is_created_buy: bool,
 ) -> Option<DexEvent> {
     match discriminator {
-        &discriminators::TRADE_EVENT => parse_trade_event_inner(data, metadata),
+        &discriminators::TRADE_EVENT => parse_trade_event_inner(data, metadata, is_created_buy),
         &discriminators::CREATE_TOKEN_EVENT => parse_create_event_inner(data, metadata),
         &discriminators::COMPLETE_PUMP_AMM_MIGRATION_EVENT => {
             parse_migrate_event_inner(data, metadata)
@@ -146,15 +150,15 @@ pub fn parse_pumpfun_inner_instruction(
 ///
 /// 根据编译时的 feature flag 自动选择解析器实现
 #[inline(always)]
-fn parse_trade_event_inner(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+fn parse_trade_event_inner(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
     #[cfg(feature = "parse-borsh")]
     {
-        parse_trade_event_inner_borsh(data, metadata)
+        parse_trade_event_inner_borsh(data, metadata, is_created_buy)
     }
 
     #[cfg(feature = "parse-zero-copy")]
     {
-        parse_trade_event_inner_zero_copy(data, metadata)
+        parse_trade_event_inner_zero_copy(data, metadata, is_created_buy)
     }
 }
 
@@ -163,11 +167,13 @@ fn parse_trade_event_inner(data: &[u8], metadata: EventMetadata) -> Option<DexEv
 /// **优点**: 类型安全、代码简洁、自动验证
 #[cfg(feature = "parse-borsh")]
 #[inline(always)]
-fn parse_trade_event_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+fn parse_trade_event_inner_borsh(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
     // PumpFun TradeEvent 不是固定大小，因为包含 String 字段
     // 我们需要解析整个数据
     let mut event = borsh::from_slice::<PumpFunTradeEvent>(data).ok()?;
     event.metadata = metadata;
+    event.is_created_buy = is_created_buy;
+    event.is_cashback_coin = event.cashback_fee_basis_points > 0;
 
     // 根据 ix_name 返回不同的事件类型
     match event.ix_name.as_str() {
@@ -183,7 +189,7 @@ fn parse_trade_event_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option
 /// **优点**: 最快、零拷贝、无验证开销
 #[cfg(feature = "parse-zero-copy")]
 #[inline(always)]
-fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
     unsafe {
         // 快速边界检查
         if data.len() < 32 + 8 + 8 + 1 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 8 + 8 + 32 + 8 + 8 {
@@ -261,24 +267,44 @@ fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Op
             if offset + 8 <= data.len() { read_i64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let ix_name = if offset + 4 <= data.len() {
-            if let Some((s, _)) = read_str_unchecked(data, offset) {
-                s.to_string()
+        let (ix_name, ix_name_len) = if offset + 4 <= data.len() {
+            if let Some((s, consumed)) = read_str_unchecked(data, offset) {
+                (s.to_string(), consumed)
             } else {
-                String::new()
+                (String::new(), 0)
             }
         } else {
-            String::new()
+            (String::new(), 0)
+        };
+        offset += ix_name_len;
+
+        // TradeEvent 新增字段 (PUMP_CASHBACK_README): mayhem_mode, cashback_fee_basis_points, cashback
+        let mayhem_mode = if offset + 1 <= data.len() {
+            read_bool_unchecked(data, offset)
+        } else {
+            false
+        };
+        offset += 1;
+        let cashback_fee_basis_points = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
+        offset += 8;
+        let cashback = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
         };
 
-        // Inner instruction 只包含日志数据，不含指令上下文账户
+        // Inner instruction 只包含日志数据，不含指令上下文账户；is_created_buy 由外层根据同 tx 是否含 create 传入
         let trade_event = PumpFunTradeEvent {
             metadata,
             mint,
             sol_amount,
             token_amount,
             is_buy,
-            is_created_buy: false, // 这个由外层检测设置
+            is_created_buy,
             user,
             timestamp,
             virtual_sol_reserves,
@@ -297,6 +323,10 @@ fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Op
             current_sol_volume,
             last_update_timestamp,
             ix_name: ix_name.clone(),
+            mayhem_mode,
+            cashback_fee_basis_points,
+            cashback,
+            is_cashback_coin: cashback_fee_basis_points > 0,
             ..Default::default() // 其他账户字段由 instruction 提供
         };
 
@@ -400,6 +430,14 @@ fn parse_create_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> O
 
         let is_mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
+        offset += 1;
+
+        // IDL CreateEvent 最后一列: is_cashback_enabled
+        let is_cashback_enabled = if offset < data.len() {
+            read_bool_unchecked(data, offset)
+        } else {
+            false
+        };
 
         Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
             metadata,
@@ -417,6 +455,7 @@ fn parse_create_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> O
             token_total_supply,
             token_program,
             is_mayhem_mode,
+            is_cashback_enabled,
         }))
     }
 }
@@ -533,7 +572,7 @@ mod tests {
         };
 
         let short_data = vec![0u8; 10];
-        let result = parse_trade_event_inner(&short_data, metadata);
+        let result = parse_trade_event_inner(&short_data, metadata, false);
         assert!(result.is_none());
     }
 }

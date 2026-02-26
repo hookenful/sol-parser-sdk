@@ -85,6 +85,19 @@ sol-parser-sdk = { path = "../sol-parser-sdk" }
 sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, features = ["parse-zero-copy"] }
 ```
 
+### 使用 crates.io
+
+```toml
+# 在 Cargo.toml 中添加
+sol-parser-sdk = "0.2.2"
+```
+
+或使用零拷贝解析器（最高性能）：
+
+```toml
+sol-parser-sdk = { version = "0.2.2", default-features = false, features = ["parse-zero-copy"] }
+```
+
 ### 性能测试
 
 使用优化示例测试解析延迟：
@@ -92,6 +105,10 @@ sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, feature
 ```bash
 # PumpFun 详细性能指标
 cargo run --example pumpfun_with_metrics --release
+
+# PumpSwap 详细性能指标（单事件明细 + 每 10 秒统计）
+cargo run --example pumpswap_with_metrics --release
+
 
 # PumpSwap 超低延迟测试
 cargo run --example pumpswap_low_latency --release
@@ -108,24 +125,32 @@ cargo run --example pumpswap_ordered --release
 ### 示例列表
 
 | 示例 | 说明 | 命令 |
-|---------|-------------|----------|
-| **PumpFun 示例** |
+|---------|-------------|---------|
+| **PumpFun** | | |
 | `pumpfun_with_metrics` | PumpFun 事件解析 + 详细性能指标 | `cargo run --example pumpfun_with_metrics --release` |
-| `pumpfun_trade_filter` | PumpFun 交易类型过滤（Buy/Sell/BuyExactSolIn）- 无序模式 | `cargo run --example pumpfun_trade_filter --release` |
+| `pumpfun_trade_filter` | PumpFun 交易类型过滤（Buy/Sell/BuyExactSolIn），无序模式 | `cargo run --example pumpfun_trade_filter --release` |
 | `pumpfun_trade_filter_ordered` | PumpFun 交易过滤 + StreamingOrdered 有序模式 | `cargo run --example pumpfun_trade_filter_ordered --release` |
-| `pumpfun_quick_test` | PumpFun 快速连接测试（接收前 10 个事件） | `cargo run --example pumpfun_quick_test --release` |
-| `parse_pump_tx` | 从 RPC 解析特定 PumpFun 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_pump_tx --release` |
-| `debug_pump_tx` | 调试 PumpFun 交易解析 | `cargo run --example debug_pump_tx --release` |
-| **PumpSwap 示例** |
-| `pumpswap_low_latency` | PumpSwap 超低延迟测试（无序，完整事件数据） | `cargo run --example pumpswap_low_latency --release` |
-| `pumpswap_ordered` | PumpSwap 买入/卖出/创建池 + MicroBatch 有序模式 | `cargo run --example pumpswap_ordered --release` |
-| `parse_pumpswap_tx` | 从 RPC 解析特定 PumpSwap 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_pumpswap_tx --release` |
-| `debug_pumpswap_tx` | 调试 PumpSwap 交易解析 | `cargo run --example debug_pumpswap_tx --release` |
-| **Meteora DAMM 示例** |
-| `meteora_damm_grpc` | Meteora DAMM gRPC 流式订阅（Swap/Swap2/AddLiquidity/RemoveLiquidity） | `cargo run --example meteora_damm_grpc --release` |
-| `parse_meteora_damm_tx` | 从 RPC 解析特定 Meteora DAMM 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` |
-| **工具示例** |
-| `dynamic_subscription` | 动态更新过滤器（无需重连） | `cargo run --example dynamic_subscription --release` |
+| `pumpfun_quick_test` | PumpFun 快速连接测试（前 10 个事件） | `cargo run --example pumpfun_quick_test --release` |
+| `parse_pump_tx` | 按签名从 RPC 解析 PumpFun 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_pump_tx --release` |
+| `debug_pump_tx` | 调试 PumpFun 交易结构与内部指令 | `cargo run --example debug_pump_tx --release` |
+| **PumpSwap** | | |
+| `pumpswap_with_metrics` | PumpSwap 事件 + 单事件与 10 秒性能统计 | `cargo run --example pumpswap_with_metrics --release` |
+| `pumpswap_low_latency` | PumpSwap 超低延迟（无序，完整事件数据） | `cargo run --example pumpswap_low_latency --release` |
+| `pumpswap_ordered` | PumpSwap 买/卖/创建池 + MicroBatch 有序 | `cargo run --example pumpswap_ordered --release` |
+| `parse_pumpswap_tx` | 按签名从 RPC 解析 PumpSwap 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_pumpswap_tx --release` |
+| `debug_pumpswap_tx` | 调试 PumpSwap 交易与 gRPC 转换 | `cargo run --example debug_pumpswap_tx --release` |
+| **Meteora DAMM** | | |
+| `meteora_damm_grpc` | Meteora DAMM V2 gRPC（Swap/AddLiquidity/RemoveLiquidity/CreatePosition/ClosePosition） | `cargo run --example meteora_damm_grpc --release` |
+| `parse_meteora_damm_tx` | 按签名从 RPC 解析 Meteora DAMM 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` |
+| **账户订阅** | | |
+| `token_balance_listen` | 订阅单个 token 账户余额变化 | `TOKEN_ACCOUNT=<pubkey> cargo run --example token_balance_listen --release` |
+| `nonce_listen` | 订阅 nonce 账户状态变化 | `NONCE_ACCOUNT=<pubkey> cargo run --example nonce_listen --release` |
+| `token_decimals_listen` | 订阅 mint 账户（TokenInfo：decimals/supply） | `MINT_ACCOUNT=<pubkey> cargo run --example token_decimals_listen --release` |
+| `pumpswap_pool_account_listen` | 通过 memcmp 订阅 PumpSwap 池账户（如 offset 32 的 mint） | `cargo run --example pumpswap_pool_account_listen --release` |
+| `mint_all_ata_account_listen` | 订阅一个或多个 mint 的全部 ATA（memcmp offset 0） | `cargo run --example mint_all_ata_account_listen --release` |
+| **工具** | | |
+| `dynamic_subscription` | 运行时更新交易/账户过滤器（无需重连） | `cargo run --example dynamic_subscription --release` |
+| `test_account_filling` | 调试 PumpSwap 账户填充（RPC + 账户解析） | `cargo run --example test_account_filling --release` |
 
 ### 基本用法
 

@@ -1,47 +1,55 @@
-//! PumpSwap 最低延迟测试示例
+//! PumpSwap 事件解析 + 详细性能指标
 //!
-//! 演示如何：
-//! - 订阅 PumpSwap 协议事件
-//! - 使用无序模式（最低延迟）
-//! - 测试端到端延迟性能
-//! - 无排序开销，直接释放事件
+//! 与 pumpfun_with_metrics 对应，订阅 PumpSwap 协议并打印：
+//! - 每个事件的明细数据（Buy/Sell/CreatePool/AddLiquidity/RemoveLiquidity）
+//! - gRPC 接收时间、队列接收时间、端到端延迟（μs）
+//! - 每 10 秒汇总：事件总数、速率、队列长度、平均/最小/最大延迟
+//!
+//! 运行: `cargo run --example pumpswap_with_metrics --release`
 
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
-    AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
-    TransactionFilter, YellowstoneGrpc,
+    AccountFilter, ClientConfig, EventType, EventTypeFilter, Protocol, TransactionFilter,
+    YellowstoneGrpc,
 };
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+fn update_min_max(min: &Arc<AtomicU64>, max: &Arc<AtomicU64>, value: u64) {
+    let mut current_min = min.load(Ordering::Relaxed);
+    while value < current_min {
+        match min.compare_exchange(current_min, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(x) => current_min = x,
+        }
+    }
+    let mut current_max = max.load(Ordering::Relaxed);
+    while value > current_max {
+        match max.compare_exchange(current_max, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(x) => current_max = x,
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    println!("🚀 PumpSwap Low-Latency Test (No Ordering)");
-    println!("============================================\n");
-
+    println!("PumpSwap event parsing with detailed performance metrics");
     run_example().await?;
     Ok(())
 }
 
 async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
-    // 最低延迟配置：无排序
-    let config = ClientConfig {
-        enable_metrics: true,
-        connection_timeout_ms: 10000,
-        request_timeout_ms: 30000,
-        enable_tls: true,
-        // 无序模式：事件解析完立即释放，零延迟
-        order_mode: OrderMode::Unordered,
-        ..Default::default()
-    };
+    println!("🚀 Subscribing to Yellowstone gRPC (PumpSwap)...");
 
-    println!("📋 Configuration:");
-    println!("   Order Mode: {:?} (零延迟，无排序开销)", config.order_mode);
-    println!("   Clock Source: now_micros() (10-50ns, 比 clock_gettime 快 20-100 倍)");
-    println!();
+    let mut config: ClientConfig = ClientConfig::default();
+    config.enable_metrics = true;
+    config.connection_timeout_ms = 10000;
+    config.request_timeout_ms = 30000;
+    config.enable_tls = true;
 
     const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
     const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
@@ -51,42 +59,46 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
         config,
     )?;
 
-    println!("✅ gRPC client created (parser pre-warmed)");
+    println!("✅ gRPC client created successfully");
 
-    // 只监控 PumpSwap 协议
     let protocols = vec![Protocol::PumpSwap];
-    println!("📊 Protocols: {:?}", protocols);
+    println!("📊 Protocols to monitor: {:?}", protocols);
 
     let transaction_filter = TransactionFilter::for_protocols(&protocols);
     let account_filter = AccountFilter::for_protocols(&protocols);
 
-    // 只订阅 PumpSwap 交易事件
+    println!("🎧 Starting subscription...");
+    println!("🔍 Monitoring PumpSwap programs for DEX events...");
+
     let event_filter = EventTypeFilter::include_only(vec![
         EventType::PumpSwapBuy,
         EventType::PumpSwapSell,
         EventType::PumpSwapCreatePool,
+        EventType::PumpSwapLiquidityAdded,
+        EventType::PumpSwapLiquidityRemoved,
     ]);
 
-    println!("🎧 Starting low-latency subscription...\n");
+    println!("📋 Event Filter: Buy, Sell, CreatePool, LiquidityAdded, LiquidityRemoved");
 
     let queue = grpc
-        .subscribe_dex_events(vec![transaction_filter], vec![account_filter], Some(event_filter))
+        .subscribe_dex_events(
+            vec![transaction_filter],
+            vec![account_filter],
+            Some(event_filter),
+        )
         .await?;
 
-    // 性能统计
     let event_count = Arc::new(AtomicU64::new(0));
     let total_latency = Arc::new(AtomicU64::new(0));
     let min_latency = Arc::new(AtomicU64::new(u64::MAX));
     let max_latency = Arc::new(AtomicU64::new(0));
 
-    // 克隆用于统计报告
     let stats_count = event_count.clone();
     let stats_total = total_latency.clone();
     let stats_min = min_latency.clone();
     let stats_max = max_latency.clone();
     let queue_for_stats = queue.clone();
 
-    // 统计报告线程（10秒间隔）
     tokio::spawn(async move {
         let mut last_count = 0u64;
         loop {
@@ -103,7 +115,7 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                 let events_per_sec = (count - last_count) as f64 / 10.0;
 
                 println!("\n╔════════════════════════════════════════════════════╗");
-                println!("║          性能统计 (10秒间隔)                       ║");
+                println!("║      PumpSwap 性能统计 (10秒间隔)                  ║");
                 println!("╠════════════════════════════════════════════════════╣");
                 println!("║  事件总数: {:>10}                              ║", count);
                 println!("║  事件速率: {:>10.1} events/sec                  ║", events_per_sec);
@@ -125,67 +137,35 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 克隆用于消费者线程
     let consumer_event_count = event_count.clone();
     let consumer_total_latency = total_latency.clone();
     let consumer_min_latency = min_latency.clone();
     let consumer_max_latency = max_latency.clone();
 
-    // 高性能消费事件
     tokio::spawn(async move {
         let mut spin_count = 0u32;
-
         loop {
             if let Some(event) = queue.pop() {
                 spin_count = 0;
 
-                // 使用高性能时钟源
                 let queue_recv_us = now_micros();
 
-                // 获取元数据
                 let grpc_recv_us_opt = match &event {
                     DexEvent::PumpSwapBuy(e) => Some(e.metadata.grpc_recv_us),
                     DexEvent::PumpSwapSell(e) => Some(e.metadata.grpc_recv_us),
                     DexEvent::PumpSwapCreatePool(e) => Some(e.metadata.grpc_recv_us),
+                    DexEvent::PumpSwapLiquidityAdded(e) => Some(e.metadata.grpc_recv_us),
+                    DexEvent::PumpSwapLiquidityRemoved(e) => Some(e.metadata.grpc_recv_us),
                     _ => None,
                 };
 
                 if let Some(grpc_recv_us) = grpc_recv_us_opt {
                     let latency_us = (queue_recv_us - grpc_recv_us) as u64;
 
-                    // 更新统计
                     consumer_event_count.fetch_add(1, Ordering::Relaxed);
                     consumer_total_latency.fetch_add(latency_us, Ordering::Relaxed);
+                    update_min_max(&consumer_min_latency, &consumer_max_latency, latency_us);
 
-                    // 更新最小值
-                    let mut current_min = consumer_min_latency.load(Ordering::Relaxed);
-                    while latency_us < current_min {
-                        match consumer_min_latency.compare_exchange(
-                            current_min,
-                            latency_us,
-                            Ordering::Relaxed,
-                            Ordering::Relaxed,
-                        ) {
-                            Ok(_) => break,
-                            Err(x) => current_min = x,
-                        }
-                    }
-
-                    // 更新最大值
-                    let mut current_max = consumer_max_latency.load(Ordering::Relaxed);
-                    while latency_us > current_max {
-                        match consumer_max_latency.compare_exchange(
-                            current_max,
-                            latency_us,
-                            Ordering::Relaxed,
-                            Ordering::Relaxed,
-                        ) {
-                            Ok(_) => break,
-                            Err(x) => current_max = x,
-                        }
-                    }
-
-                    // 打印完整的时间指标和事件数据
                     println!("\n================================================");
                     println!("gRPC接收时间: {} μs", grpc_recv_us);
                     println!("事件接收时间: {} μs", queue_recv_us);
@@ -207,17 +187,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 自动停止（用于测试）
-    let grpc_clone = grpc.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-        println!("⏰ Auto-stopping after 10 minutes...");
-        grpc_clone.stop().await;
-    });
-
-    println!("🛑 Press Ctrl+C to stop...\n");
+    println!("🛑 Press Ctrl+C to stop...");
     tokio::signal::ctrl_c().await?;
-    println!("\n👋 Shutting down gracefully...");
+    println!("👋 Shutting down gracefully...");
 
     Ok(())
 }

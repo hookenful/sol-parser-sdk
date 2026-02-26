@@ -135,14 +135,6 @@ unsafe fn read_pubkey_unchecked(data: &[u8], offset: usize) -> Pubkey {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        use std::arch::aarch64::_prefetch;
-        if offset + 64 < data.len() {
-            _prefetch(data.as_ptr().add(offset + 32), _MM_HINT_T0);
-        }
-    }
-
     let ptr = data.as_ptr().add(offset);
     let mut bytes = [0u8; 32];
     std::ptr::copy_nonoverlapping(ptr, bytes.as_mut_ptr(), 32);
@@ -316,6 +308,12 @@ fn parse_create_event_optimized(
 
         let is_mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
+        offset += 1;
+        let is_cashback_enabled = if offset < data.len() {
+            read_bool_unchecked(data, offset)
+        } else {
+            false
+        };
 
         let metadata = EventMetadata {
             signature,
@@ -343,6 +341,7 @@ fn parse_create_event_optimized(
             token_total_supply,
             token_program,
             is_mayhem_mode,
+            is_cashback_enabled,
         }))
     }
 }
@@ -454,9 +453,21 @@ fn parse_trade_event_optimized(
             String::new()
         };
 
-        // mayhem_mode: bool (1 byte, new field from IDL update)
+        // mayhem_mode: bool (1 byte), cashback_fee_basis_points (8), cashback (8) - PUMP_CASHBACK_README
         let mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
+        offset += 1;
+        let cashback_fee_basis_points = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
+        offset += 8;
+        let cashback = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
 
         let metadata = EventMetadata {
             signature,
@@ -493,6 +504,9 @@ fn parse_trade_event_optimized(
             last_update_timestamp,
             ix_name: ix_name.clone(),
             mayhem_mode,
+            cashback_fee_basis_points,
+            cashback,
+            is_cashback_coin: cashback_fee_basis_points > 0,
             bonding_curve: Pubkey::default(),
             associated_bonding_curve: Pubkey::default(),
             creator_vault: Pubkey::default(),
@@ -698,9 +712,21 @@ pub fn parse_trade_from_data(
             String::new()
         };
 
-        // mayhem_mode: bool (1 byte, new field from IDL update)
+        // mayhem_mode (1), cashback_fee_basis_points (8), cashback (8) - PUMP_CASHBACK_README
         let mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
+        offset += 1;
+        let cashback_fee_basis_points = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
+        offset += 8;
+        let cashback = if offset + 8 <= data.len() {
+            read_u64_unchecked(data, offset)
+        } else {
+            0
+        };
 
         let trade_event = PumpFunTradeEvent {
             metadata,
@@ -729,6 +755,9 @@ pub fn parse_trade_from_data(
             last_update_timestamp,
             ix_name: ix_name.clone(),
             mayhem_mode,
+            cashback_fee_basis_points,
+            cashback,
+            is_cashback_coin: cashback_fee_basis_points > 0,
             bonding_curve: Pubkey::default(),
             associated_bonding_curve: Pubkey::default(),
             creator_vault: Pubkey::default(),
@@ -848,6 +877,12 @@ pub fn parse_create_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
 
         let is_mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
+        offset += 1;
+        let is_cashback_enabled = if offset < data.len() {
+            read_bool_unchecked(data, offset)
+        } else {
+            false
+        };
 
         Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
             metadata,
@@ -865,6 +900,7 @@ pub fn parse_create_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
             token_total_supply,
             token_program,
             is_mayhem_mode,
+            is_cashback_enabled,
         }))
     }
 }
