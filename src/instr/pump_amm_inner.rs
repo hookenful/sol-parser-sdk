@@ -28,6 +28,7 @@
 
 use crate::core::events::*;
 use crate::instr::inner_common::*;
+use crate::instr::inner_common;
 
 /// PumpSwap inner instruction discriminators (16 bytes)
 /// Format: [event_magic (8 bytes) | event_discriminator (8 bytes)]
