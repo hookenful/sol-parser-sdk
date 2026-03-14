@@ -25,7 +25,8 @@ async fn run_dynamic_subscription_example() -> Result<(), Box<dyn std::error::Er
     config.enable_tls = true;
 
     const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    const GRPC_AUTH_TOKEN: &str =
+        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
         GRPC_ENDPOINT.to_string(),
         Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),

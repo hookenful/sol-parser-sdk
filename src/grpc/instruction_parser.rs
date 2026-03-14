@@ -270,7 +270,12 @@ fn parse_inner_instruction(
                 return None;
             }
         }
-        pump_inner::parse_pumpfun_inner_instruction(&discriminator, inner_data, metadata, is_created_buy)
+        pump_inner::parse_pumpfun_inner_instruction(
+            &discriminator,
+            inner_data,
+            metadata,
+            is_created_buy,
+        )
     } else if *program_id == program_ids::PUMPSWAP_PROGRAM_ID {
         if let Some(f) = filter {
             if !f.includes_pumpswap() {
@@ -463,5 +468,4 @@ mod tests {
             panic!("Expected PumpFunTrade event");
         }
     }
-
 }

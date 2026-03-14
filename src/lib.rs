@@ -1,3 +1,23 @@
+// Route SDK stdout/stderr prints into tracing so host TUI stays stable.
+macro_rules! println {
+    () => {{
+        tracing::info!("")
+    }};
+    ($($arg:tt)*) => {{
+        tracing::info!("{}", format_args!($($arg)*))
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! eprintln {
+    () => {{
+        tracing::warn!("")
+    }};
+    ($($arg:tt)*) => {{
+        tracing::warn!("{}", format_args!($($arg)*))
+    }};
+}
+
 // 核心模块 - 扁平化结构
 pub mod accounts; // 账户解析器
 pub mod common;

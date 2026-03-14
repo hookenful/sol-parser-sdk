@@ -318,17 +318,10 @@ fn parse_buy_event_optimized(
         };
 
         // BuyEvent 新增字段 (PUMP_CASHBACK_README): cashback_fee_basis_points, cashback
-        let cashback_fee_basis_points = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback_fee_basis_points =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         let metadata = EventMetadata {
             signature,

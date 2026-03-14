@@ -47,9 +47,13 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
 
     // publicnode gRPC 需要 token；endpoint/token 可由环境变量覆盖
     const GRPC_ENDPOINT_DEFAULT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN_DEFAULT: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
-    let grpc_endpoint = std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| GRPC_ENDPOINT_DEFAULT.to_string());
-    let grpc_token = Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN_DEFAULT.to_string()));
+    const GRPC_AUTH_TOKEN_DEFAULT: &str =
+        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    let grpc_endpoint =
+        std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| GRPC_ENDPOINT_DEFAULT.to_string());
+    let grpc_token = Some(
+        std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN_DEFAULT.to_string()),
+    );
 
     let grpc = YellowstoneGrpc::new_with_config(grpc_endpoint.clone(), grpc_token, config)?;
 

@@ -23,17 +23,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ClientConfig::default();
     let grpc = YellowstoneGrpc::new_with_config(
-        std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
+        std::env::var("GRPC_ENDPOINT")
+            .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
         std::env::var("GRPC_AUTH_TOKEN").ok(),
         config,
     )?;
 
     let transaction_filter = TransactionFilter::default();
-    let account_filter = AccountFilter {
-        account: vec![nonce_account.clone()],
-        owner: vec![],
-        filters: vec![],
-    };
+    let account_filter =
+        AccountFilter { account: vec![nonce_account.clone()], owner: vec![], filters: vec![] };
     let event_filter = EventTypeFilter::include_only(vec![EventType::NonceAccount]);
 
     let queue = grpc

@@ -27,8 +27,8 @@
 //! ```
 
 use crate::core::events::*;
-use crate::instr::inner_common::*;
 use crate::instr::inner_common;
+use crate::instr::inner_common::*;
 
 /// PumpSwap inner instruction discriminators (16 bytes)
 /// Format: [event_magic (8 bytes) | event_discriminator (8 bytes)]
@@ -241,7 +241,9 @@ fn parse_buy_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<Dex
             0
         };
         let ix_name = if offset + 4 <= data.len() {
-            if let Some((s, consumed)) = unsafe { inner_common::read_string_unchecked(data, offset) } {
+            if let Some((s, consumed)) =
+                unsafe { inner_common::read_string_unchecked(data, offset) }
+            {
                 offset += consumed;
                 s
             } else {
@@ -257,11 +259,7 @@ fn parse_buy_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<Dex
         } else {
             0
         };
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent {
             metadata,

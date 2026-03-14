@@ -7,11 +7,11 @@
 //!
 //! 运行: `cargo run --example pumpswap_with_metrics --release`
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, Protocol, TransactionFilter,
     YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -52,7 +52,8 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     config.enable_tls = true;
 
     const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    const GRPC_AUTH_TOKEN: &str =
+        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
         GRPC_ENDPOINT.to_string(),
         Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),
@@ -81,11 +82,7 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Event Filter: Buy, Sell, CreatePool, LiquidityAdded, LiquidityRemoved");
 
     let queue = grpc
-        .subscribe_dex_events(
-            vec![transaction_filter],
-            vec![account_filter],
-            Some(event_filter),
-        )
+        .subscribe_dex_events(vec![transaction_filter], vec![account_filter], Some(event_filter))
         .await?;
 
     let event_count = Arc::new(AtomicU64::new(0));

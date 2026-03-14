@@ -309,11 +309,8 @@ fn parse_create_event_optimized(
         let is_mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
-        let is_cashback_enabled = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let is_cashback_enabled =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
 
         let metadata = EventMetadata {
             signature,
@@ -457,17 +454,10 @@ fn parse_trade_event_optimized(
         let mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
-        let cashback_fee_basis_points = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback_fee_basis_points =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         let metadata = EventMetadata {
             signature,
@@ -716,17 +706,10 @@ pub fn parse_trade_from_data(
         let mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
-        let cashback_fee_basis_points = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback_fee_basis_points =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         let trade_event = PumpFunTradeEvent {
             metadata,
@@ -878,11 +861,8 @@ pub fn parse_create_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
         let is_mayhem_mode =
             if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
-        let is_cashback_enabled = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let is_cashback_enabled =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
 
         Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
             metadata,

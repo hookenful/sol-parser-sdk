@@ -5,12 +5,12 @@
 //!
 //! Run: `cargo run --example pumpswap_pool_account_listen --release`
 
-use solana_sdk::pubkey::Pubkey;
 use sol_parser_sdk::grpc::{
     account_filter_memcmp, AccountFilter, ClientConfig, EventType, EventTypeFilter,
     TransactionFilter, YellowstoneGrpc,
 };
 use sol_parser_sdk::DexEvent;
+use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 
 #[tokio::main]
@@ -26,7 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ClientConfig::default();
     let grpc = YellowstoneGrpc::new_with_config(
-        std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
+        std::env::var("GRPC_ENDPOINT")
+            .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
         std::env::var("GRPC_AUTH_TOKEN").ok(),
         config,
     )?;
@@ -66,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("TokenAccount pubkey={} amount={:?}", e.pubkey, e.amount);
                     }
                     DexEvent::PumpSwapPoolAccount(e) => {
-                        println!("PumpSwapPoolAccount pubkey={} pool(base_mint={}, quote_mint={})", e.pubkey, e.pool.base_mint, e.pool.quote_mint);
+                        println!(
+                            "PumpSwapPoolAccount pubkey={} pool(base_mint={}, quote_mint={})",
+                            e.pubkey, e.pool.base_mint, e.pool.quote_mint
+                        );
                     }
                     _ => {}
                 }

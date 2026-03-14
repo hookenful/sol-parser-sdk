@@ -305,8 +305,13 @@ fn main() {
 #[allow(dead_code)]
 fn convert_rpc_to_grpc_debug(
     rpc_tx: &solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta,
-) -> Result<(yellowstone_grpc_proto::prelude::TransactionStatusMeta,
-             yellowstone_grpc_proto::prelude::Transaction), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        yellowstone_grpc_proto::prelude::TransactionStatusMeta,
+        yellowstone_grpc_proto::prelude::Transaction,
+    ),
+    Box<dyn std::error::Error>,
+> {
     use yellowstone_grpc_proto::prelude::*;
 
     let _rpc_meta = rpc_tx.transaction.meta.as_ref().ok_or("No meta")?;
