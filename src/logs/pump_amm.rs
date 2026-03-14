@@ -795,6 +795,9 @@ pub fn parse_buy_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEv
 #[inline(always)]
 pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     const REQUIRED_LEN: usize = 13 * 8 + 8 + 7 * 32;
+    const CASHBACK_FEE_BASIS_POINTS_OFFSET: usize = 352;
+    const CASHBACK_OFFSET: usize = 360;
+    const CASHBACK_FIELDS_LEN: usize = 16;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -825,6 +828,15 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
 
         let coin_creator_fee_basis_points = read_u64_unchecked(data, 336);
         let coin_creator_fee = read_u64_unchecked(data, 344);
+        let (cashback_fee_basis_points, cashback) =
+            if data.len() >= CASHBACK_FEE_BASIS_POINTS_OFFSET + CASHBACK_FIELDS_LEN {
+                (
+                    read_u64_unchecked(data, CASHBACK_FEE_BASIS_POINTS_OFFSET),
+                    read_u64_unchecked(data, CASHBACK_OFFSET),
+                )
+            } else {
+                (0, 0)
+            };
 
         Some(DexEvent::PumpSwapSell(PumpSwapSellEvent {
             metadata,
@@ -851,6 +863,8 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
             coin_creator,
             coin_creator_fee_basis_points,
             coin_creator_fee,
+            cashback_fee_basis_points,
+            cashback,
             ..Default::default()
         }))
     }
@@ -1037,6 +1051,67 @@ pub fn reset_perf_stats() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_sdk::{pubkey::Pubkey, signature::Signature};
+
+    fn metadata() -> EventMetadata {
+        EventMetadata {
+            signature: Signature::default(),
+            slot: 0,
+            tx_index: 0,
+            block_time_us: 0,
+            grpc_recv_us: 0,
+        }
+    }
+
+    fn write_u64(buf: &mut [u8], offset: usize, value: u64) {
+        buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_i64(buf: &mut [u8], offset: usize, value: i64) {
+        buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_pubkey(buf: &mut [u8], offset: usize, value: Pubkey) {
+        buf[offset..offset + 32].copy_from_slice(value.as_ref());
+    }
+
+    fn build_sell_payload(include_cashback: bool) -> Vec<u8> {
+        let len = if include_cashback { 368 } else { 352 };
+        let mut data = vec![0u8; len];
+
+        write_i64(&mut data, 0, 1_713_498_953);
+        write_u64(&mut data, 8, 11);
+        write_u64(&mut data, 16, 22);
+        write_u64(&mut data, 24, 33);
+        write_u64(&mut data, 32, 44);
+        write_u64(&mut data, 40, 55);
+        write_u64(&mut data, 48, 66);
+        write_u64(&mut data, 56, 77);
+        write_u64(&mut data, 64, 88);
+        write_u64(&mut data, 72, 99);
+        write_u64(&mut data, 80, 111);
+        write_u64(&mut data, 88, 122);
+        write_u64(&mut data, 96, 133);
+        write_u64(&mut data, 104, 144);
+
+        write_pubkey(&mut data, 112, Pubkey::new_from_array([1; 32]));
+        write_pubkey(&mut data, 144, Pubkey::new_from_array([2; 32]));
+        write_pubkey(&mut data, 176, Pubkey::new_from_array([3; 32]));
+        write_pubkey(&mut data, 208, Pubkey::new_from_array([4; 32]));
+        write_pubkey(&mut data, 240, Pubkey::new_from_array([5; 32]));
+        write_pubkey(&mut data, 272, Pubkey::new_from_array([6; 32]));
+        write_pubkey(&mut data, 304, Pubkey::new_from_array([7; 32]));
+
+        write_u64(&mut data, 336, 155);
+        write_u64(&mut data, 344, 166);
+
+        if include_cashback {
+            write_u64(&mut data, 352, 177);
+            write_u64(&mut data, 360, 188);
+        }
+
+        data
+    }
 
     #[test]
     fn test_discriminator_simd() {
@@ -1059,5 +1134,35 @@ mod tests {
         let elapsed = start.elapsed();
 
         println!("Average parse time: {} ns", elapsed.as_nanos() / 1000);
+    }
+
+    #[test]
+    fn parse_sell_from_data_preserves_cashback_fields() {
+        let event = parse_sell_from_data(&build_sell_payload(true), metadata())
+            .expect("expected pumpswap sell event");
+
+        let DexEvent::PumpSwapSell(event) = event else {
+            panic!("expected PumpSwapSell event");
+        };
+
+        assert_eq!(event.cashback_fee_basis_points, 177);
+        assert_eq!(event.cashback, 188);
+        assert_eq!(event.coin_creator_fee_basis_points, 155);
+        assert_eq!(event.coin_creator_fee, 166);
+    }
+
+    #[test]
+    fn parse_sell_from_data_keeps_legacy_payload_compatible() {
+        let event = parse_sell_from_data(&build_sell_payload(false), metadata())
+            .expect("expected legacy pumpswap sell event");
+
+        let DexEvent::PumpSwapSell(event) = event else {
+            panic!("expected PumpSwapSell event");
+        };
+
+        assert_eq!(event.cashback_fee_basis_points, 0);
+        assert_eq!(event.cashback, 0);
+        assert_eq!(event.coin_creator_fee_basis_points, 155);
+        assert_eq!(event.coin_creator_fee, 166);
     }
 }
