@@ -7,7 +7,7 @@
 
 use crate::core::{events::*, merger::merge_events};
 use crate::grpc::types::EventTypeFilter;
-use crate::instr::read_pubkey_fast;
+use crate::instr::{read_pubkey_fast, InstructionParseMode};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use std::collections::HashMap;
@@ -37,6 +37,55 @@ pub fn parse_instructions_enhanced(
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
 ) -> Vec<DexEvent> {
+    parse_instructions_enhanced_with_mode(
+        meta,
+        transaction,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        filter,
+        InstructionParseMode::Strict,
+    )
+}
+
+#[inline]
+pub fn parse_instructions_enhanced_logless(
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    filter: Option<&EventTypeFilter>,
+) -> Vec<DexEvent> {
+    parse_instructions_enhanced_with_mode(
+        meta,
+        transaction,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        filter,
+        InstructionParseMode::Logless,
+    )
+}
+
+#[inline]
+fn parse_instructions_enhanced_with_mode(
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    filter: Option<&EventTypeFilter>,
+    parse_mode: InstructionParseMode,
+) -> Vec<DexEvent> {
     let Some(tx) = transaction else { return Vec::new() };
     let Some(msg) = &tx.message else { return Vec::new() };
 
@@ -46,8 +95,8 @@ pub fn parse_instructions_enhanced(
         Some(bs58::encode(&msg.recent_blockhash).into_string())
     };
 
-    // 提前检查：是否需要解析 instruction（根据 filter）
-    if !should_parse_instructions(filter) {
+    // 严格模式下保留原有的提前过滤逻辑
+    if matches!(parse_mode, InstructionParseMode::Strict) && !should_parse_instructions(filter) {
         return Vec::new();
     }
 
@@ -89,6 +138,7 @@ pub fn parse_instructions_enhanced(
             &ix.accounts,
             &get_key,
             filter,
+            parse_mode,
             is_created_buy,
         ) {
             result.push((i, None, event)); // (outer_idx, inner_idx, event)
@@ -132,10 +182,8 @@ pub fn parse_instructions_enhanced(
     }
 
     // 步骤 3.5: 转换 invokes HashMap 为字符串键（用于 fill_data）
-    let invokes_str: HashMap<&str, Vec<(i32, i32)>> = invokes
-        .iter()
-        .map(|(k, v)| (k.to_string().leak() as &str, v.clone()))
-        .collect();
+    let invokes_str: HashMap<&str, Vec<(i32, i32)>> =
+        invokes.iter().map(|(k, v)| (k.to_string().leak() as &str, v.clone())).collect();
 
     // 步骤 4: 填充账户上下文
     let mut final_result = Vec::with_capacity(merged.len());
@@ -172,6 +220,7 @@ fn parse_outer_instruction<'a>(
     account_indices: &[u8],
     get_key: &dyn Fn(usize) -> Option<&'a Vec<u8>>,
     filter: Option<&EventTypeFilter>,
+    parse_mode: InstructionParseMode,
     _is_created_buy: bool,
 ) -> Option<DexEvent> {
     // 检查指令数据长度（至少8字节 discriminator）
@@ -186,16 +235,8 @@ fn parse_outer_instruction<'a>(
         .collect();
 
     // 调用现有的 instruction 解析器
-    crate::instr::parse_instruction_unified(
-        data,
-        &accounts,
-        sig,
-        slot,
-        tx_idx,
-        block_us,
-        grpc_us,
-        filter,
-        program_id,
+    crate::instr::parse_instruction_unified_with_mode(
+        data, &accounts, sig, slot, tx_idx, block_us, grpc_us, filter, program_id, parse_mode,
     )
 }
 
@@ -242,7 +283,12 @@ fn parse_inner_instruction(
                 return None;
             }
         }
-        pump_inner::parse_pumpfun_inner_instruction(&discriminator, inner_data, metadata, is_created_buy)
+        pump_inner::parse_pumpfun_inner_instruction(
+            &discriminator,
+            inner_data,
+            metadata,
+            is_created_buy,
+        )
     } else if *program_id == program_ids::PUMPSWAP_PROGRAM_ID {
         if let Some(f) = filter {
             if !f.includes_pumpswap() {
@@ -251,7 +297,11 @@ fn parse_inner_instruction(
         }
         pump_amm_inner::parse_pumpswap_inner_instruction(&discriminator, inner_data, metadata)
     } else if *program_id == program_ids::RAYDIUM_CLMM_PROGRAM_ID {
-        raydium_clmm_inner::parse_raydium_clmm_inner_instruction(&discriminator, inner_data, metadata)
+        raydium_clmm_inner::parse_raydium_clmm_inner_instruction(
+            &discriminator,
+            inner_data,
+            metadata,
+        )
     } else if *program_id == program_ids::RAYDIUM_CPMM_PROGRAM_ID {
         all_inner::raydium_cpmm::parse(&discriminator, inner_data, metadata)
     } else if *program_id == program_ids::RAYDIUM_AMM_V4_PROGRAM_ID {
@@ -281,16 +331,15 @@ fn parse_inner_instruction(
 /// 2. Inner instruction 在 outer instruction 之后出现
 /// 3. 合并后返回更完整的事件
 #[inline]
-fn merge_instruction_events(
-    events: Vec<(usize, Option<usize>, DexEvent)>,
-) -> Vec<DexEvent> {
+fn merge_instruction_events(events: Vec<(usize, Option<usize>, DexEvent)>) -> Vec<DexEvent> {
     if events.is_empty() {
         return Vec::new();
     }
 
     // 按 (outer_idx, inner_idx) 排序，确保顺序：outer -> inner
     let mut events = events;
-    events.sort_by_key(|(outer, inner, _)| (*outer, inner.unwrap_or(usize::MAX)));
+    events
+        .sort_by_key(|(outer, inner, _)| (*outer, inner.map(|v| v.saturating_add(1)).unwrap_or(0)));
 
     let mut result = Vec::with_capacity(events.len());
     let mut pending_outer: Option<(usize, DexEvent)> = None;
@@ -348,8 +397,11 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
         use crate::grpc::types::EventType::*;
         matches!(
             t,
-            PumpFunMigrate | MeteoraDammV2Swap | MeteoraDammV2AddLiquidity
-                | MeteoraDammV2CreatePosition | MeteoraDammV2ClosePosition
+            PumpFunMigrate
+                | MeteoraDammV2Swap
+                | MeteoraDammV2AddLiquidity
+                | MeteoraDammV2CreatePosition
+                | MeteoraDammV2ClosePosition
                 | MeteoraDammV2RemoveLiquidity
         )
     })
@@ -412,8 +464,8 @@ mod tests {
         });
 
         let events = vec![
-            (0, None, outer_event),          // outer instruction at index 0
-            (0, Some(0), inner_event),       // inner instruction at index 0
+            (0, None, outer_event),    // outer instruction at index 0
+            (0, Some(0), inner_event), // inner instruction at index 0
         ];
 
         let result = merge_instruction_events(events);

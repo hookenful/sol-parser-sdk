@@ -15,7 +15,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mint_account = std::env::var("MINT_ACCOUNT").unwrap_or_else(|_| {
-        eprintln!("Usage: MINT_ACCOUNT=<pubkey> cargo run --example token_decimals_listen --release");
+        eprintln!(
+            "Usage: MINT_ACCOUNT=<pubkey> cargo run --example token_decimals_listen --release"
+        );
         std::process::exit(1);
     });
 
@@ -24,17 +26,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ClientConfig::default();
     let grpc = YellowstoneGrpc::new_with_config(
-        std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
+        std::env::var("GRPC_ENDPOINT")
+            .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
         std::env::var("GRPC_AUTH_TOKEN").ok(),
         config,
     )?;
 
     let transaction_filter = TransactionFilter::default();
-    let account_filter = AccountFilter {
-        account: vec![mint_account.clone()],
-        owner: vec![],
-        filters: vec![],
-    };
+    let account_filter =
+        AccountFilter { account: vec![mint_account.clone()], owner: vec![], filters: vec![] };
     let event_filter = EventTypeFilter::include_only(vec![EventType::TokenAccount]);
 
     let queue = grpc

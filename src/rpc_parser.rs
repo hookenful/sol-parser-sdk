@@ -7,18 +7,18 @@ use crate::core::events::DexEvent;
 use crate::grpc::instruction_parser::parse_instructions_enhanced;
 use crate::grpc::types::EventTypeFilter;
 use crate::instr::read_pubkey_fast;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
-use solana_sdk::signature::Signature;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signature;
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiTransactionEncoding,
 };
 use std::collections::HashMap;
 use yellowstone_grpc_proto::prelude::{
-    CompiledInstruction, InnerInstruction, InnerInstructions, Message, MessageAddressTableLookup, MessageHeader,
-    Transaction, TransactionStatusMeta,
+    CompiledInstruction, InnerInstruction, InnerInstructions, Message, MessageAddressTableLookup,
+    MessageHeader, Transaction, TransactionStatusMeta,
 };
 
 /// Parse a transaction from RPC by signature
@@ -96,24 +96,20 @@ pub fn parse_rpc_transaction(
     let signature = extract_signature(rpc_tx)?;
     let slot = rpc_tx.slot;
     let block_time_us = rpc_tx.block_time.map(|t| t * 1_000_000);
-    let grpc_recv_us = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_micros() as i64;
+    let grpc_recv_us =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros()
+            as i64;
 
     // Wrap grpc_tx in Option for reuse
     let grpc_tx_opt = Some(grpc_tx);
 
-    let recent_blockhash = grpc_tx_opt
-        .as_ref()
-        .and_then(|t| t.message.as_ref())
-        .and_then(|m| {
-            if m.recent_blockhash.is_empty() {
-                None
-            } else {
-                Some(m.recent_blockhash.clone())
-            }
-        });
+    let recent_blockhash = grpc_tx_opt.as_ref().and_then(|t| t.message.as_ref()).and_then(|m| {
+        if m.recent_blockhash.is_empty() {
+            None
+        } else {
+            Some(m.recent_blockhash.clone())
+        }
+    });
 
     // Build program_invokes HashMap for account filling
     // Use string keys to match gRPC parsing logic
@@ -151,7 +147,10 @@ pub fn parse_rpc_transaction(
                         .map_or(Pubkey::default(), |k| read_pubkey_fast(k));
                     let pid_str = pid.to_string();
                     let pid_static: &'static str = pid_str.leak();
-                    program_invokes.entry(pid_static).or_default().push((outer_idx as i32, j as i32));
+                    program_invokes
+                        .entry(pid_static)
+                        .or_default()
+                        .push((outer_idx as i32, j as i32));
                 }
             }
         }
@@ -171,7 +170,6 @@ pub fn parse_rpc_transaction(
 
     // Parse logs (for protocols like PumpFun that emit events in logs)
     let mut is_created_buy = false;
-
     for log in &grpc_meta.log_messages {
         if let Some(mut event) = crate::logs::parse_log(
             log,
@@ -243,8 +241,9 @@ fn extract_signature(
 
     match ui_tx {
         EncodedTransaction::Binary(data, _encoding) => {
-            let bytes = general_purpose::STANDARD.decode(data)
-                .map_err(|e| ParseError::ConversionError(format!("Failed to decode base64: {}", e)))?;
+            let bytes = general_purpose::STANDARD.decode(data).map_err(|e| {
+                ParseError::ConversionError(format!("Failed to decode base64: {}", e))
+            })?;
 
             let versioned_tx: solana_sdk::transaction::VersionedTransaction =
                 bincode::deserialize(&bytes).map_err(|e| {
@@ -253,9 +252,7 @@ fn extract_signature(
 
             Ok(versioned_tx.signatures[0])
         }
-        _ => Err(ParseError::ConversionError(
-            "Unsupported transaction encoding".to_string(),
-        )),
+        _ => Err(ParseError::ConversionError("Unsupported transaction encoding".to_string())),
     }
 }
 
@@ -332,7 +329,8 @@ pub fn convert_rpc_to_grpc(
             opt.is_none()
         },
         return_data_none: {
-            let opt: Option<solana_transaction_status::UiTransactionReturnData> = rpc_meta.return_data.clone().into();
+            let opt: Option<solana_transaction_status::UiTransactionReturnData> =
+                rpc_meta.return_data.clone().into();
             opt.is_none()
         },
     };
@@ -341,33 +339,29 @@ pub fn convert_rpc_to_grpc(
     let inner_instructions_opt: Option<Vec<_>> = rpc_meta.inner_instructions.clone().into();
     if let Some(ref inner_instructions) = inner_instructions_opt {
         for inner in inner_instructions {
-        let mut grpc_inner = InnerInstructions {
-            index: inner.index as u32,
-            instructions: Vec::new(),
-        };
+            let mut grpc_inner =
+                InnerInstructions { index: inner.index as u32, instructions: Vec::new() };
 
-        for ix in &inner.instructions {
-            if let solana_transaction_status::UiInstruction::Compiled(compiled) = ix {
-                // Decode base58 data
-                let data = bs58::decode(&compiled.data)
-                    .into_vec()
-                    .map_err(|e| {
+            for ix in &inner.instructions {
+                if let solana_transaction_status::UiInstruction::Compiled(compiled) = ix {
+                    // Decode base58 data
+                    let data = bs58::decode(&compiled.data).into_vec().map_err(|e| {
                         ParseError::ConversionError(format!(
                             "Failed to decode instruction data: {}",
                             e
                         ))
                     })?;
 
-                grpc_inner.instructions.push(InnerInstruction {
-                    program_id_index: compiled.program_id_index as u32,
-                    accounts: compiled.accounts.clone(),
-                    data,
-                    stack_height: compiled.stack_height.map(|h| h as u32),
-                });
+                    grpc_inner.instructions.push(InnerInstruction {
+                        program_id_index: compiled.program_id_index as u32,
+                        accounts: compiled.accounts.clone(),
+                        data,
+                        stack_height: compiled.stack_height.map(|h| h as u32),
+                    });
+                }
             }
-        }
 
-        grpc_meta.inner_instructions.push(grpc_inner);
+            grpc_meta.inner_instructions.push(grpc_inner);
         }
     }
 
@@ -387,11 +381,8 @@ pub fn convert_rpc_to_grpc(
                     ParseError::ConversionError(format!("Failed to deserialize transaction: {}", e))
                 })?;
 
-            let sigs: Vec<Vec<u8>> = versioned_tx
-                .signatures
-                .iter()
-                .map(|s| s.as_ref().to_vec())
-                .collect();
+            let sigs: Vec<Vec<u8>> =
+                versioned_tx.signatures.iter().map(|s| s.as_ref().to_vec()).collect();
 
             let message = match versioned_tx.message {
                 solana_sdk::message::VersionedMessage::Legacy(legacy_msg) => {
@@ -414,10 +405,7 @@ pub fn convert_rpc_to_grpc(
         }
     };
 
-    let grpc_tx = Transaction {
-        signatures,
-        message: Some(message),
-    };
+    let grpc_tx = Transaction { signatures, message: Some(message) };
 
     Ok((grpc_meta, grpc_tx))
 }
@@ -425,11 +413,8 @@ pub fn convert_rpc_to_grpc(
 fn convert_legacy_message(
     msg: &solana_sdk::message::legacy::Message,
 ) -> Result<Message, ParseError> {
-    let account_keys: Vec<Vec<u8>> = msg
-        .account_keys
-        .iter()
-        .map(|k| k.to_bytes().to_vec())
-        .collect();
+    let account_keys: Vec<Vec<u8>> =
+        msg.account_keys.iter().map(|k| k.to_bytes().to_vec()).collect();
 
     let instructions: Vec<CompiledInstruction> = msg
         .instructions
@@ -456,11 +441,8 @@ fn convert_legacy_message(
 }
 
 fn convert_v0_message(msg: &solana_sdk::message::v0::Message) -> Result<Message, ParseError> {
-    let account_keys: Vec<Vec<u8>> = msg
-        .account_keys
-        .iter()
-        .map(|k| k.to_bytes().to_vec())
-        .collect();
+    let account_keys: Vec<Vec<u8>> =
+        msg.account_keys.iter().map(|k| k.to_bytes().to_vec()).collect();
 
     let instructions: Vec<CompiledInstruction> = msg
         .instructions

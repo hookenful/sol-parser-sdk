@@ -2,9 +2,9 @@
 //!
 //! 使用 match discriminator 模式解析 Raydium CPMM 事件
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
 use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Raydium CPMM discriminator 常量
 pub mod discriminators {
@@ -20,14 +20,21 @@ pub const PROGRAM_ID: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
 
 /// 检查日志是否来自 Raydium CPMM 程序
 pub fn is_raydium_cpmm_log(log: &str) -> bool {
-    log.contains(&format!("Program {} invoke", PROGRAM_ID)) ||
-    log.contains(&format!("Program {} success", PROGRAM_ID)) ||
-    (log.contains("raydium") && log.contains("cpmm"))
+    log.contains(&format!("Program {} invoke", PROGRAM_ID))
+        || log.contains(&format!("Program {} success", PROGRAM_ID))
+        || (log.contains("raydium") && log.contains("cpmm"))
 }
 
 /// 主要的 Raydium CPMM 日志解析函数
-#[inline(always)]  // 零延迟优化：内联热路径
-pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
+#[inline(always)] // 零延迟优化：内联热路径
+pub fn parse_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
 }
 
@@ -51,19 +58,19 @@ fn parse_structured_log(
     match discriminator {
         discriminators::SWAP_BASE_IN => {
             parse_swap_base_in_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::SWAP_BASE_OUT => {
             parse_swap_base_out_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::CREATE_POOL => {
             parse_create_pool_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::DEPOSIT => {
             parse_deposit_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::WITHDRAW => {
             parse_withdraw_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         _ => None,
     }
 }
@@ -259,21 +266,21 @@ fn parse_swap_base_in_event(
 
     let is_base_input = read_bool(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
 
     Some(DexEvent::RaydiumCpmmSwap(RaydiumCpmmSwapEvent {
         metadata,
 
         // IDL SwapEvent 事件字段
         pool_id: pool_state,
-        input_vault_before: 0, // 需要从日志数据解析
+        input_vault_before: 0,  // 需要从日志数据解析
         output_vault_before: 0, // 需要从日志数据解析
         input_amount: amount_in,
         output_amount: amount_out,
-        input_transfer_fee: 0, // 需要从日志数据解析
+        input_transfer_fee: 0,  // 需要从日志数据解析
         output_transfer_fee: 0, // 需要从日志数据解析
         base_input: is_base_input,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in,
@@ -321,21 +328,21 @@ fn parse_swap_base_out_event(
 
     let is_base_output = read_bool(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
 
     Some(DexEvent::RaydiumCpmmSwap(RaydiumCpmmSwapEvent {
         metadata,
 
         // IDL SwapEvent 事件字段
         pool_id: pool_state,
-        input_vault_before: 0, // 需要从日志数据解析
+        input_vault_before: 0,  // 需要从日志数据解析
         output_vault_before: 0, // 需要从日志数据解析
         input_amount: amount_in,
         output_amount: amount_out,
-        input_transfer_fee: 0, // 需要从日志数据解析
+        input_transfer_fee: 0,  // 需要从日志数据解析
         output_transfer_fee: 0, // 需要从日志数据解析
         base_input: !is_base_output,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in: maximum_amount_in,
@@ -383,7 +390,8 @@ fn parse_create_pool_event(
 
     let initial_amount_1 = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
 
     Some(DexEvent::RaydiumCpmmInitialize(RaydiumCpmmInitializeEvent {
         metadata,
@@ -419,7 +427,8 @@ fn parse_deposit_event(
 
     let token_1_amount = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
 
     Some(DexEvent::RaydiumCpmmDeposit(RaydiumCpmmDepositEvent {
         metadata,
@@ -456,7 +465,8 @@ fn parse_withdraw_event(
 
     let token_1_amount = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state, grpc_recv_us);
 
     Some(DexEvent::RaydiumCpmmWithdraw(RaydiumCpmmWithdrawEvent {
         metadata,
@@ -481,24 +491,66 @@ fn parse_text_log(
 
     if log.contains("swap") || log.contains("Swap") {
         if log.contains("base_in") {
-            return parse_swap_base_in_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+            return parse_swap_base_in_from_text(
+                log,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                grpc_recv_us,
+            );
         } else if log.contains("base_out") {
-            return parse_swap_base_out_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+            return parse_swap_base_out_from_text(
+                log,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                grpc_recv_us,
+            );
         } else {
-            return parse_swap_base_in_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+            return parse_swap_base_in_from_text(
+                log,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                grpc_recv_us,
+            );
         }
     }
 
     if log.contains("deposit") || log.contains("Deposit") {
-        return parse_deposit_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_deposit_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     if log.contains("withdraw") || log.contains("Withdraw") {
-        return parse_withdraw_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_withdraw_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     if log.contains("create") && log.contains("pool") {
-        return parse_create_pool_from_text(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_create_pool_from_text(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     None
@@ -515,7 +567,14 @@ fn parse_swap_base_in_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumCpmmSwap(RaydiumCpmmSwapEvent {
         metadata,
@@ -529,7 +588,6 @@ fn parse_swap_base_in_from_text(
         input_transfer_fee: 0,
         output_transfer_fee: 0,
         base_input: true,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in: extract_number_from_text(log, "amount_in").unwrap_or(1_000_000_000),
@@ -560,7 +618,14 @@ fn parse_swap_base_out_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumCpmmSwap(RaydiumCpmmSwapEvent {
         metadata,
@@ -574,7 +639,6 @@ fn parse_swap_base_out_from_text(
         input_transfer_fee: 0,
         output_transfer_fee: 0,
         base_input: false,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in: extract_number_from_text(log, "amount_in").unwrap_or(1_000_000_000),
@@ -605,7 +669,14 @@ fn parse_create_pool_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumCpmmInitialize(RaydiumCpmmInitializeEvent {
         metadata,
@@ -627,7 +698,14 @@ fn parse_deposit_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumCpmmDeposit(RaydiumCpmmDepositEvent {
         metadata,
@@ -650,7 +728,14 @@ fn parse_withdraw_from_text(
 ) -> Option<DexEvent> {
     use super::utils::text_parser::*;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, Pubkey::default(), grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        Pubkey::default(),
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumCpmmWithdraw(RaydiumCpmmWithdrawEvent {
         metadata,

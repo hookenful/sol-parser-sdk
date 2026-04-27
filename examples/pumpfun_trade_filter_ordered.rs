@@ -5,11 +5,11 @@
 //! - Filter specific trade types: Buy, Sell, BuyExactSolIn
 //! - Events are ordered by (slot, tx_index) for consistency
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
     TransactionFilter, YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 
 #[tokio::main]
@@ -31,9 +31,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
         connection_timeout_ms: 10000,
         request_timeout_ms: 30000,
         enable_tls: true,
-        order_mode: OrderMode::MicroBatch,  // Micro-batch ordering
-        micro_batch_us: 1000,               // 1ms batch window
-        order_timeout_ms: 50,               // Periodic flush check interval
+        order_mode: OrderMode::MicroBatch, // Micro-batch ordering
+        micro_batch_us: 1000,              // 1ms batch window
+        order_timeout_ms: 50,              // Periodic flush check interval
         ..Default::default()
     };
 
@@ -44,7 +44,8 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    const GRPC_AUTH_TOKEN: &str =
+        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
         GRPC_ENDPOINT.to_string(),
         Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),
@@ -100,13 +101,25 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                     DexEvent::PumpFunBuy(e) => {
                         buy_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        let order_ok = check_order(e.metadata.slot, e.metadata.tx_index, &mut last_slot, &mut last_tx_index);
+                        let order_ok = check_order(
+                            e.metadata.slot,
+                            e.metadata.tx_index,
+                            &mut last_slot,
+                            &mut last_tx_index,
+                        );
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🟢 PumpFun BUY #{} {}", event_count, if order_ok { "✓" } else { "⚠️ OUT OF ORDER" });
+                        println!(
+                            "│ 🟢 PumpFun BUY #{} {}",
+                            event_count,
+                            if order_ok { "✓" } else { "⚠️ OUT OF ORDER" }
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports", e.sol_amount);
@@ -114,20 +127,37 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ User       : {}", e.user);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}", buy_count, sell_count, buy_exact_count, create_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}",
+                            buy_count, sell_count, buy_exact_count, create_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunSell(e) => {
                         sell_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        let order_ok = check_order(e.metadata.slot, e.metadata.tx_index, &mut last_slot, &mut last_tx_index);
+                        let order_ok = check_order(
+                            e.metadata.slot,
+                            e.metadata.tx_index,
+                            &mut last_slot,
+                            &mut last_tx_index,
+                        );
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🔴 PumpFun SELL #{} {}", event_count, if order_ok { "✓" } else { "⚠️ OUT OF ORDER" });
+                        println!(
+                            "│ 🔴 PumpFun SELL #{} {}",
+                            event_count,
+                            if order_ok { "✓" } else { "⚠️ OUT OF ORDER" }
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports", e.sol_amount);
@@ -135,20 +165,37 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ User       : {}", e.user);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}", buy_count, sell_count, buy_exact_count, create_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}",
+                            buy_count, sell_count, buy_exact_count, create_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunBuyExactSolIn(e) => {
                         buy_exact_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        let order_ok = check_order(e.metadata.slot, e.metadata.tx_index, &mut last_slot, &mut last_tx_index);
+                        let order_ok = check_order(
+                            e.metadata.slot,
+                            e.metadata.tx_index,
+                            &mut last_slot,
+                            &mut last_tx_index,
+                        );
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🟡 PumpFun BUY_EXACT_SOL_IN #{} {}", event_count, if order_ok { "✓" } else { "⚠️ OUT OF ORDER" });
+                        println!(
+                            "│ 🟡 PumpFun BUY_EXACT_SOL_IN #{} {}",
+                            event_count,
+                            if order_ok { "✓" } else { "⚠️ OUT OF ORDER" }
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Mint       : {}", e.mint);
                         println!("│ SOL Amount : {} lamports", e.sol_amount);
@@ -156,33 +203,61 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ User       : {}", e.user);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}", buy_count, sell_count, buy_exact_count, create_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "│ 📊 Stats   : Buy={} Sell={} BuyExact={} Create={}",
+                            buy_count, sell_count, buy_exact_count, create_count
+                        );
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunTrade(e) => {
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        let order_ok = check_order(e.metadata.slot, e.metadata.tx_index, &mut last_slot, &mut last_tx_index);
+                        let order_ok = check_order(
+                            e.metadata.slot,
+                            e.metadata.tx_index,
+                            &mut last_slot,
+                            &mut last_tx_index,
+                        );
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ ⚪ PumpFun TRADE #{} {}", event_count, if order_ok { "✓" } else { "⚠️ OUT OF ORDER" });
+                        println!(
+                            "│ ⚪ PumpFun TRADE #{} {}",
+                            event_count,
+                            if order_ok { "✓" } else { "⚠️ OUT OF ORDER" }
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ ix_name    : {} (is_buy={})", e.ix_name, e.is_buy);
                         println!("│ Signature  : {}", e.metadata.signature);
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     DexEvent::PumpFunCreate(e) => {
                         create_count += 1;
                         let latency_us = now_us - e.metadata.grpc_recv_us;
-                        let order_ok = check_order(e.metadata.slot, e.metadata.tx_index, &mut last_slot, &mut last_tx_index);
+                        let order_ok = check_order(
+                            e.metadata.slot,
+                            e.metadata.tx_index,
+                            &mut last_slot,
+                            &mut last_tx_index,
+                        );
 
                         println!("┌─────────────────────────────────────────────────────────────");
-                        println!("│ 🆕 PumpFun CREATE #{} {}", event_count, if order_ok { "✓" } else { "⚠️ OUT OF ORDER" });
+                        println!(
+                            "│ 🆕 PumpFun CREATE #{} {}",
+                            event_count,
+                            if order_ok { "✓" } else { "⚠️ OUT OF ORDER" }
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Name       : {}", e.name);
                         println!("│ Symbol     : {}", e.symbol);
@@ -191,7 +266,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!("│ 📊 Creates : {}", create_count);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
                     }
 
                     _ => {}

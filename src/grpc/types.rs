@@ -25,6 +25,14 @@ pub enum OrderMode {
     MicroBatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CommitmentMode {
+    #[default]
+    Processed,
+    Confirmed,
+    Finalized,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// 是否启用性能监控
@@ -49,6 +57,8 @@ pub struct ClientConfig {
     /// MicroBatch 模式下的时间窗口大小（微秒）
     /// 默认 100μs，可根据网络状况调整
     pub micro_batch_us: u64,
+    /// Yellowstone 订阅承诺级别
+    pub commitment: CommitmentMode,
 }
 
 impl Default for ClientConfig {
@@ -67,6 +77,7 @@ impl Default for ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 100,
             micro_batch_us: 100, // 100μs 默认窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 }
@@ -76,17 +87,18 @@ impl ClientConfig {
         Self {
             enable_metrics: false,
             connection_timeout_ms: 5000,
-            request_timeout_ms: 10000,
+            request_timeout_ms: 0,
             enable_tls: true,
-            max_retries: 1,
-            retry_delay_ms: 100,
+            max_retries: 5,
+            retry_delay_ms: 50,
             max_concurrent_streams: 200,
-            keep_alive_interval_ms: 10000,
+            keep_alive_interval_ms: 3000,
             keep_alive_timeout_ms: 2000,
             buffer_size: 16384,
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 50,
             micro_batch_us: 50, // 50μs 更激进的窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 
@@ -105,6 +117,7 @@ impl ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 200,
             micro_batch_us: 200, // 200μs 高吞吐模式
+            commitment: CommitmentMode::Processed,
         }
     }
 }
@@ -241,9 +254,9 @@ pub enum EventType {
     BonkMigrateAmm,
 
     // PumpFun events
-    PumpFunTrade,    // All trade events (backward compatible)
-    PumpFunBuy,      // Buy events only (filter by ix_name)
-    PumpFunSell,     // Sell events only (filter by ix_name)
+    PumpFunTrade,         // All trade events (backward compatible)
+    PumpFunBuy,           // Buy events only (filter by ix_name)
+    PumpFunSell,          // Sell events only (filter by ix_name)
     PumpFunBuyExactSolIn, // BuyExactSolIn events only (filter by ix_name)
     PumpFunCreate,
     PumpFunCreateV2, // SPL-22 / Mayhem create
@@ -341,9 +354,14 @@ impl EventTypeFilter {
             // If filter includes any of these specific types, allow PumpFunTrade through
             // (secondary filtering will happen after parsing)
             if event_type == EventType::PumpFunTrade {
-                return include_only.iter().any(|t| matches!(t,
-                    EventType::PumpFunBuy | EventType::PumpFunSell | EventType::PumpFunBuyExactSolIn
-                ));
+                return include_only.iter().any(|t| {
+                    matches!(
+                        t,
+                        EventType::PumpFunBuy
+                            | EventType::PumpFunSell
+                            | EventType::PumpFunBuyExactSolIn
+                    )
+                });
             }
             return false;
         }
@@ -458,9 +476,7 @@ impl EventTypeFilter {
             return include_only.iter().any(|t| {
                 matches!(
                     t,
-                    EventType::BonkTrade
-                        | EventType::BonkPoolCreate
-                        | EventType::BonkMigrateAmm
+                    EventType::BonkTrade | EventType::BonkPoolCreate | EventType::BonkMigrateAmm
                 )
             });
         }
@@ -468,9 +484,7 @@ impl EventTypeFilter {
             return !exclude_types.iter().any(|t| {
                 matches!(
                     t,
-                    EventType::BonkTrade
-                        | EventType::BonkPoolCreate
-                        | EventType::BonkMigrateAmm
+                    EventType::BonkTrade | EventType::BonkPoolCreate | EventType::BonkMigrateAmm
                 )
             });
         }

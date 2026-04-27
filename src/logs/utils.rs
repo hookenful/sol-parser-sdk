@@ -2,12 +2,12 @@
 //!
 //! 提供字节数据解析的基础工具，不使用 BorshDeserialize
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use crate::core::clock::now_us;
 use crate::core::events::EventMetadata;
 #[cfg(target_os = "windows")]
 use crate::core::now_micros;
-use base64::{Engine as _, engine::general_purpose};
-use crate::core::clock::now_us;
+use base64::{engine::general_purpose, Engine as _};
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// 从日志中提取程序数据（使用 SIMD 优化查找）
 #[inline]
@@ -53,39 +53,33 @@ pub fn extract_discriminator_fast(log: &str) -> Option<[u8; 8]> {
 /// 从字节数组中读取 u64（小端序）- SIMD 优化
 #[inline]
 pub fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
-    data.get(offset..offset + 8)
-        .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 8).map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 u32（小端序）- SIMD 优化
 #[inline]
 pub fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4)
-        .map(|slice| u32::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 4).map(|slice| u32::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 i64（小端序）- SIMD 优化
 pub fn read_i64_le(data: &[u8], offset: usize) -> Option<i64> {
-    data.get(offset..offset + 8)
-        .map(|slice| i64::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 8).map(|slice| i64::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 i32（小端序）- SIMD 优化
 pub fn read_i32_le(data: &[u8], offset: usize) -> Option<i32> {
-    data.get(offset..offset + 4)
-        .map(|slice| i32::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 4).map(|slice| i32::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 u128（小端序）- SIMD 优化
 pub fn read_u128_le(data: &[u8], offset: usize) -> Option<u128> {
-    data.get(offset..offset + 16)
-        .map(|slice| u128::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 16).map(|slice| u128::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 u16（小端序）- SIMD 优化
 pub fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2)
-        .map(|slice| u16::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 2).map(|slice| u16::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从字节数组中读取 u8
@@ -96,11 +90,10 @@ pub fn read_u8(data: &[u8], offset: usize) -> Option<u8> {
 /// 从字节数组中读取 Pubkey（32字节）- SIMD 优化
 #[inline]
 pub fn read_pubkey(data: &[u8], offset: usize) -> Option<Pubkey> {
-    data.get(offset..offset + 32)
-        .and_then(|slice| {
-            let key_bytes: [u8; 32] = slice.try_into().ok()?;
-            Some(Pubkey::new_from_array(key_bytes))
-        })
+    data.get(offset..offset + 32).and_then(|slice| {
+        let key_bytes: [u8; 32] = slice.try_into().ok()?;
+        Some(Pubkey::new_from_array(key_bytes))
+    })
 }
 
 /// 从字节数组中读取字符串（分配版本，向后兼容）
@@ -120,7 +113,7 @@ pub fn read_string(data: &[u8], offset: usize) -> Option<(String, usize)> {
 /// // 直接使用引用，无需分配
 /// println!("Name: {}", name_ref);
 /// ```
-#[inline(always)]  // 零延迟优化：内联热路径
+#[inline(always)] // 零延迟优化：内联热路径
 pub fn read_string_ref(data: &[u8], offset: usize) -> Option<(&str, usize)> {
     if data.len() < offset + 4 {
         return None;
@@ -132,7 +125,7 @@ pub fn read_string_ref(data: &[u8], offset: usize) -> Option<(&str, usize)> {
     }
 
     let string_bytes = &data[offset + 4..offset + 4 + len];
-    let string_ref = std::str::from_utf8(string_bytes).ok()?;  // 零拷贝
+    let string_ref = std::str::from_utf8(string_bytes).ok()?; // 零拷贝
     Some((string_ref, 4 + len))
 }
 
@@ -219,7 +212,7 @@ pub mod text_parser {
     /// let value_ref = extract_text_field_ref(log, "amount")?;
     /// let amount: u64 = value_ref.parse().ok()?;
     /// ```
-    #[inline(always)]  // 零延迟优化：内联热路径
+    #[inline(always)] // 零延迟优化：内联热路径
     pub fn extract_text_field_ref<'a>(text: &'a str, field: &str) -> Option<&'a str> {
         let start = text.find(&format!("{}:", field))?;
         let after_colon = &text[start + field.len() + 1..];

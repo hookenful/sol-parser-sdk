@@ -56,10 +56,10 @@ fn warmup_simd_finders() {
 
     // 触发 optimized_matcher 中的所有 Lazy Finder 初始化
     // 通过访问它们的内部数据来强制初始化
-    
+
     // 使用一个虚拟日志来触发所有 Finder
     let dummy_log = b"Program data: Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P invoke [1]";
-    
+
     // 预热 logs/optimized_matcher.rs 中的所有 Finder
     let _ = memmem::find(dummy_log, b"Program data: ");
     let _ = memmem::find(dummy_log, b"6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
@@ -70,29 +70,24 @@ fn warmup_simd_finders() {
     let _ = memmem::find(dummy_log, b"PumpSwap");
     let _ = memmem::find(dummy_log, b"whirL");
     let _ = memmem::find(dummy_log, b"meteora");
-    
+
     // 触发 parse_invoke_info 来预热相关 Finder
     let _ = crate::logs::optimized_matcher::parse_invoke_info(
-        "Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P invoke [1]"
+        "Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P invoke [1]",
     );
-    
+
     // 触发 detect_log_type 来预热类型检测
-    let _ = crate::logs::optimized_matcher::detect_log_type(
-        "Program data: test"
-    );
+    let _ = crate::logs::optimized_matcher::detect_log_type("Program data: test");
 }
 
 /// 预热 Base64 引擎
 #[inline]
 fn warmup_base64() {
     use base64::Engine;
-    
+
     // 解码一个小的 Base64 字符串来预热引擎
     let mut buf = [0u8; 32];
-    let _ = base64::engine::general_purpose::STANDARD.decode_slice(
-        b"AAAAAAAAAAAAAAAA",
-        &mut buf
-    );
+    let _ = base64::engine::general_purpose::STANDARD.decode_slice(b"AAAAAAAAAAAAAAAA", &mut buf);
 }
 
 /// 检查是否已预热
@@ -110,7 +105,7 @@ mod tests {
         assert!(!is_warmed_up());
         warmup_parser();
         assert!(is_warmed_up());
-        
+
         // 再次调用应该是 no-op
         warmup_parser();
         assert!(is_warmed_up());

@@ -5,11 +5,11 @@
 //! - 使用微批次模式（超低延迟 + 顺序保证）
 //! - 打印事件详情和解析延迟
 
+use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::grpc::{
     AccountFilter, ClientConfig, EventType, EventTypeFilter, OrderMode, Protocol,
     TransactionFilter, YellowstoneGrpc,
 };
-use sol_parser_sdk::core::now_micros;
 use sol_parser_sdk::DexEvent;
 
 #[tokio::main]
@@ -45,7 +45,8 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN: &str = "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
+    const GRPC_AUTH_TOKEN: &str =
+        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
         GRPC_ENDPOINT.to_string(),
         Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),
@@ -110,10 +111,16 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🟢 PumpSwap BUY #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
-                        println!("│ Order Check: {} (prev: slot={}, tx={})", 
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
+                        println!(
+                            "│ Order Check: {} (prev: slot={}, tx={})",
                             if order_ok { "✓ OK" } else { "✗ OUT OF ORDER" },
-                            last_slot, last_tx_index);
+                            last_slot,
+                            last_tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Base Token : {:?}", e.base_mint);
                         println!("│ Quote Token: {:?}", e.quote_mint);
@@ -123,7 +130,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!("│ 📊 Avg     : {} μs", total_latency_us / event_count as i64);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
 
                         last_slot = e.metadata.slot;
                         last_tx_index = e.metadata.tx_index;
@@ -145,10 +154,16 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🔴 PumpSwap SELL #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
-                        println!("│ Order Check: {} (prev: slot={}, tx={})", 
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
+                        println!(
+                            "│ Order Check: {} (prev: slot={}, tx={})",
                             if order_ok { "✓ OK" } else { "✗ OUT OF ORDER" },
-                            last_slot, last_tx_index);
+                            last_slot,
+                            last_tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Base Token : {:?}", e.base_mint);
                         println!("│ Quote Token: {:?}", e.quote_mint);
@@ -158,7 +173,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
                         println!("│ 📊 Avg     : {} μs", total_latency_us / event_count as i64);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
 
                         last_slot = e.metadata.slot;
                         last_tx_index = e.metadata.tx_index;
@@ -172,7 +189,10 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ 🆕 PumpSwap CREATE POOL #{}", event_count);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Signature  : {}", e.metadata.signature);
-                        println!("│ Slot       : {} | TxIndex: {}", e.metadata.slot, e.metadata.tx_index);
+                        println!(
+                            "│ Slot       : {} | TxIndex: {}",
+                            e.metadata.slot, e.metadata.tx_index
+                        );
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ Pool       : {:?}", e.pool);
                         println!("│ Base Mint  : {:?}", e.base_mint);
@@ -180,7 +200,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
                         println!("│ Creator    : {:?}", e.creator);
                         println!("├─────────────────────────────────────────────────────────────");
                         println!("│ 📊 Latency : {} μs", latency_us);
-                        println!("└─────────────────────────────────────────────────────────────\n");
+                        println!(
+                            "└─────────────────────────────────────────────────────────────\n"
+                        );
 
                         last_slot = e.metadata.slot;
                         last_tx_index = e.metadata.tx_index;

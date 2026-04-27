@@ -2,10 +2,10 @@
 //!
 //! 解析 Orca Whirlpool 程序的日志事件
 
-use solana_sdk::signature::Signature;
-use solana_sdk::pubkey::Pubkey;
-use crate::core::events::*;
 use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signature;
 
 /// Orca Whirlpool 事件 discriminator 常量
 pub mod discriminators {
@@ -16,7 +16,14 @@ pub mod discriminators {
 }
 
 /// 主要的 Orca Whirlpool 日志解析函数
-pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
+pub fn parse_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
 }
 
@@ -41,16 +48,31 @@ fn parse_structured_log(
     match discriminator {
         discriminators::TRADED_EVENT => {
             parse_traded_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::LIQUIDITY_INCREASED_EVENT => {
-            parse_liquidity_increased_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::LIQUIDITY_DECREASED_EVENT => {
-            parse_liquidity_decreased_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::POOL_INITIALIZED_EVENT => {
-            parse_pool_initialized_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
+        discriminators::LIQUIDITY_INCREASED_EVENT => parse_liquidity_increased_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::LIQUIDITY_DECREASED_EVENT => parse_liquidity_decreased_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::POOL_INITIALIZED_EVENT => parse_pool_initialized_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         _ => None,
     }
 }
@@ -110,7 +132,10 @@ pub fn parse_traded_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
 
 /// Parse Orca Whirlpool LiquidityIncreased event from pre-decoded data
 #[inline(always)]
-pub fn parse_liquidity_increased_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+pub fn parse_liquidity_increased_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
     let mut offset = 0;
 
     let whirlpool = read_pubkey(data, offset)?;
@@ -155,7 +180,10 @@ pub fn parse_liquidity_increased_from_data(data: &[u8], metadata: EventMetadata)
 
 /// Parse Orca Whirlpool LiquidityDecreased event from pre-decoded data
 #[inline(always)]
-pub fn parse_liquidity_decreased_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+pub fn parse_liquidity_decreased_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
     let mut offset = 0;
 
     let whirlpool = read_pubkey(data, offset)?;
@@ -287,7 +315,8 @@ fn parse_traded_event(
 
     let protocol_fee = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
 
     Some(DexEvent::OrcaWhirlpoolSwap(OrcaWhirlpoolSwapEvent {
         metadata,
@@ -303,7 +332,6 @@ fn parse_traded_event(
         output_transfer_fee,
         lp_fee,
         protocol_fee,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount: input_amount,
@@ -360,7 +388,8 @@ fn parse_liquidity_increased_event(
 
     let token_b_transfer_fee = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
 
     Some(DexEvent::OrcaWhirlpoolLiquidityIncreased(OrcaWhirlpoolLiquidityIncreasedEvent {
         metadata,
@@ -413,7 +442,8 @@ fn parse_liquidity_decreased_event(
 
     let token_b_transfer_fee = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
 
     Some(DexEvent::OrcaWhirlpoolLiquidityDecreased(OrcaWhirlpoolLiquidityDecreasedEvent {
         metadata,
@@ -469,7 +499,8 @@ fn parse_pool_initialized_event(
 
     let initial_sqrt_price = read_u128_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, whirlpool, grpc_recv_us);
 
     Some(DexEvent::OrcaWhirlpoolPoolInitialized(OrcaWhirlpoolPoolInitializedEvent {
         metadata,

@@ -35,11 +35,12 @@ pub static PARSE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 pub mod discriminators {
     // Use u64 direct comparison to avoid array comparison
     // Event discriminators from pump_amm.json
-    pub const BUY: u64 = u64::from_le_bytes([103, 244, 82, 31, 44, 245, 119, 119]);           // BuyEvent
-    pub const SELL: u64 = u64::from_le_bytes([62, 47, 55, 10, 165, 3, 220, 42]);              // SellEvent
+    pub const BUY: u64 = u64::from_le_bytes([103, 244, 82, 31, 44, 245, 119, 119]); // BuyEvent
+    pub const SELL: u64 = u64::from_le_bytes([62, 47, 55, 10, 165, 3, 220, 42]); // SellEvent
     pub const CREATE_POOL: u64 = u64::from_le_bytes([177, 49, 12, 210, 160, 118, 167, 116]); // CreatePoolEvent
     pub const ADD_LIQUIDITY: u64 = u64::from_le_bytes([120, 248, 61, 83, 31, 142, 107, 144]); // DepositEvent
-    pub const REMOVE_LIQUIDITY: u64 = u64::from_le_bytes([22, 9, 133, 26, 160, 44, 71, 192]); // WithdrawEvent
+    pub const REMOVE_LIQUIDITY: u64 = u64::from_le_bytes([22, 9, 133, 26, 160, 44, 71, 192]);
+    // WithdrawEvent
 }
 
 /// Base64 查找器预计算 (用于快速定位)
@@ -69,9 +70,8 @@ fn extract_program_data_zero_copy<'a>(log: &'a str, buf: &'a mut [u8; 2048]) -> 
 
     // SIMD-accelerated base64 decoding (AVX2/SSE4/NEON)
     use base64_simd::AsOut;
-    let decoded_slice = base64_simd::STANDARD
-        .decode(trimmed.as_bytes(), buf.as_mut().as_out())
-        .ok()?;
+    let decoded_slice =
+        base64_simd::STANDARD.decode(trimmed.as_bytes(), buf.as_mut().as_out()).ok()?;
 
     Some(decoded_slice)
 }
@@ -92,9 +92,7 @@ fn extract_discriminator_simd(log: &str) -> Option<u64> {
     // 只解码前16字节以获取 discriminator (SIMD-accelerated)
     use base64_simd::AsOut;
     let mut buf = [0u8; 12];
-    base64_simd::STANDARD
-        .decode(&trimmed.as_bytes()[..16], buf.as_mut().as_out())
-        .ok()?;
+    base64_simd::STANDARD.decode(&trimmed.as_bytes()[..16], buf.as_mut().as_out()).ok()?;
 
     // 使用 unsafe 读取 u64 (零拷贝，无边界检查)
     unsafe {
@@ -208,15 +206,30 @@ pub fn parse_log(
         discriminators::SELL => {
             parse_sell_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
         }
-        discriminators::CREATE_POOL => {
-            parse_create_pool_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
-        discriminators::ADD_LIQUIDITY => {
-            parse_add_liquidity_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
-        discriminators::REMOVE_LIQUIDITY => {
-            parse_remove_liquidity_event_optimized(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        }
+        discriminators::CREATE_POOL => parse_create_pool_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::ADD_LIQUIDITY => parse_add_liquidity_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::REMOVE_LIQUIDITY => parse_remove_liquidity_event_optimized(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         _ => None,
     };
 
@@ -305,17 +318,10 @@ fn parse_buy_event_optimized(
         };
 
         // BuyEvent 新增字段 (PUMP_CASHBACK_README): cashback_fee_basis_points, cashback
-        let cashback_fee_basis_points = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback_fee_basis_points =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         let metadata = EventMetadata {
             signature,
@@ -787,6 +793,9 @@ pub fn parse_buy_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEv
 #[inline(always)]
 pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     const REQUIRED_LEN: usize = 13 * 8 + 8 + 7 * 32;
+    const CASHBACK_FEE_BASIS_POINTS_OFFSET: usize = 352;
+    const CASHBACK_OFFSET: usize = 360;
+    const CASHBACK_FIELDS_LEN: usize = 16;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -817,6 +826,15 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
 
         let coin_creator_fee_basis_points = read_u64_unchecked(data, 336);
         let coin_creator_fee = read_u64_unchecked(data, 344);
+        let (cashback_fee_basis_points, cashback) =
+            if data.len() >= CASHBACK_FEE_BASIS_POINTS_OFFSET + CASHBACK_FIELDS_LEN {
+                (
+                    read_u64_unchecked(data, CASHBACK_FEE_BASIS_POINTS_OFFSET),
+                    read_u64_unchecked(data, CASHBACK_OFFSET),
+                )
+            } else {
+                (0, 0)
+            };
 
         Some(DexEvent::PumpSwapSell(PumpSwapSellEvent {
             metadata,
@@ -843,6 +861,8 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
             coin_creator,
             coin_creator_fee_basis_points,
             coin_creator_fee,
+            cashback_fee_basis_points,
+            cashback,
             ..Default::default()
         }))
     }
@@ -851,7 +871,7 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
 /// Parse PumpSwap CreatePool event from pre-decoded data
 #[inline(always)]
 pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
-    const REQUIRED_LEN: usize = 8 + 2 + 32*6 + 2 + 8*7 + 1;
+    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -1029,11 +1049,73 @@ pub fn reset_perf_stats() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_sdk::{pubkey::Pubkey, signature::Signature};
+
+    fn metadata() -> EventMetadata {
+        EventMetadata {
+            signature: Signature::default(),
+            slot: 0,
+            tx_index: 0,
+            block_time_us: 0,
+            grpc_recv_us: 0,
+            recent_blockhash: None,
+        }
+    }
+
+    fn write_u64(buf: &mut [u8], offset: usize, value: u64) {
+        buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_i64(buf: &mut [u8], offset: usize, value: i64) {
+        buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_pubkey(buf: &mut [u8], offset: usize, value: Pubkey) {
+        buf[offset..offset + 32].copy_from_slice(value.as_ref());
+    }
+
+    fn build_sell_payload(include_cashback: bool) -> Vec<u8> {
+        let len = if include_cashback { 368 } else { 352 };
+        let mut data = vec![0u8; len];
+
+        write_i64(&mut data, 0, 1_713_498_953);
+        write_u64(&mut data, 8, 11);
+        write_u64(&mut data, 16, 22);
+        write_u64(&mut data, 24, 33);
+        write_u64(&mut data, 32, 44);
+        write_u64(&mut data, 40, 55);
+        write_u64(&mut data, 48, 66);
+        write_u64(&mut data, 56, 77);
+        write_u64(&mut data, 64, 88);
+        write_u64(&mut data, 72, 99);
+        write_u64(&mut data, 80, 111);
+        write_u64(&mut data, 88, 122);
+        write_u64(&mut data, 96, 133);
+        write_u64(&mut data, 104, 144);
+
+        write_pubkey(&mut data, 112, Pubkey::new_from_array([1; 32]));
+        write_pubkey(&mut data, 144, Pubkey::new_from_array([2; 32]));
+        write_pubkey(&mut data, 176, Pubkey::new_from_array([3; 32]));
+        write_pubkey(&mut data, 208, Pubkey::new_from_array([4; 32]));
+        write_pubkey(&mut data, 240, Pubkey::new_from_array([5; 32]));
+        write_pubkey(&mut data, 272, Pubkey::new_from_array([6; 32]));
+        write_pubkey(&mut data, 304, Pubkey::new_from_array([7; 32]));
+
+        write_u64(&mut data, 336, 155);
+        write_u64(&mut data, 344, 166);
+
+        if include_cashback {
+            write_u64(&mut data, 352, 177);
+            write_u64(&mut data, 360, 188);
+        }
+
+        data
+    }
 
     #[test]
     fn test_discriminator_simd() {
         // 测试 SIMD discriminator 提取
-        let log = "Program data: Z/RS H8v1d3cAAAAAAAAAAA=";
+        let log = "Program data: Z/RSHyz1d3cAAAAA";
         let disc = extract_discriminator_simd(log);
         assert!(disc.is_some());
     }
@@ -1041,7 +1123,7 @@ mod tests {
     #[test]
     fn test_parse_performance() {
         // 性能测试
-        let log = "Program data: Z/RS H8v1d3cAAAAAAAAAAA=";
+        let log = "Program data: Z/RSHyz1d3cAAAAA";
         let sig = Signature::default();
 
         let start = std::time::Instant::now();
@@ -1051,5 +1133,35 @@ mod tests {
         let elapsed = start.elapsed();
 
         println!("Average parse time: {} ns", elapsed.as_nanos() / 1000);
+    }
+
+    #[test]
+    fn parse_sell_from_data_preserves_cashback_fields() {
+        let event = parse_sell_from_data(&build_sell_payload(true), metadata())
+            .expect("expected pumpswap sell event");
+
+        let DexEvent::PumpSwapSell(event) = event else {
+            panic!("expected PumpSwapSell event");
+        };
+
+        assert_eq!(event.cashback_fee_basis_points, 177);
+        assert_eq!(event.cashback, 188);
+        assert_eq!(event.coin_creator_fee_basis_points, 155);
+        assert_eq!(event.coin_creator_fee, 166);
+    }
+
+    #[test]
+    fn parse_sell_from_data_keeps_legacy_payload_compatible() {
+        let event = parse_sell_from_data(&build_sell_payload(false), metadata())
+            .expect("expected legacy pumpswap sell event");
+
+        let DexEvent::PumpSwapSell(event) = event else {
+            panic!("expected PumpSwapSell event");
+        };
+
+        assert_eq!(event.cashback_fee_basis_points, 0);
+        assert_eq!(event.cashback, 0);
+        assert_eq!(event.coin_creator_fee_basis_points, 155);
+        assert_eq!(event.coin_creator_fee, 166);
     }
 }

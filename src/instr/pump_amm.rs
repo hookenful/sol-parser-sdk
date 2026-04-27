@@ -52,9 +52,14 @@ pub fn parse_instruction(
         discriminators::BUY => {
             parse_buy_instruction(data, accounts, signature, slot, tx_index, block_time_us)
         }
-        discriminators::BUY_EXACT_QUOTE_IN => {
-            parse_buy_exact_quote_in_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        }
+        discriminators::BUY_EXACT_QUOTE_IN => parse_buy_exact_quote_in_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         discriminators::SELL => {
             parse_sell_instruction(data, accounts, signature, slot, tx_index, block_time_us)
         }
@@ -103,10 +108,7 @@ fn parse_buy_instruction(
         (0, 0)
     };
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     let mut ev = PumpSwapBuyEvent {
         metadata,
@@ -161,10 +163,7 @@ fn parse_buy_exact_quote_in_instruction(
         (0, 0)
     };
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     let mut ev = PumpSwapBuyEvent {
         metadata,
@@ -222,10 +221,7 @@ fn parse_sell_instruction(
         (0, 0)
     };
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     let mut ev = PumpSwapSellEvent {
         metadata,
@@ -266,10 +262,7 @@ fn parse_create_pool_instruction(
         return None;
     }
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     Some(DexEvent::PumpSwapCreatePool(PumpSwapCreatePoolEvent {
         metadata,
@@ -294,10 +287,7 @@ fn parse_deposit_instruction(
         return None;
     }
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     Some(DexEvent::PumpSwapLiquidityAdded(PumpSwapLiquidityAdded {
         metadata,
@@ -324,10 +314,7 @@ fn parse_withdraw_instruction(
         return None;
     }
 
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), 0
-    );
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), 0);
 
     Some(DexEvent::PumpSwapLiquidityRemoved(PumpSwapLiquidityRemoved {
         metadata,

@@ -32,22 +32,34 @@ pub fn fill_damm_v2_swap_accounts(_e: &mut MeteoraDammV2SwapEvent, _get: &Accoun
     // DAMM V2 使用虚拟池，账户字段较少
 }
 
-pub fn fill_damm_v2_create_position_accounts(_e: &mut MeteoraDammV2CreatePositionEvent, _get: &AccountGetter<'_>) {
+pub fn fill_damm_v2_create_position_accounts(
+    _e: &mut MeteoraDammV2CreatePositionEvent,
+    _get: &AccountGetter<'_>,
+) {
     // DAMM V2 是动态 AMM，没有传统的 position 概念
     // 此事件类型可能不适用
 }
 
-pub fn fill_damm_v2_close_position_accounts(_e: &mut MeteoraDammV2ClosePositionEvent, _get: &AccountGetter<'_>) {
+pub fn fill_damm_v2_close_position_accounts(
+    _e: &mut MeteoraDammV2ClosePositionEvent,
+    _get: &AccountGetter<'_>,
+) {
     // DAMM V2 是动态 AMM，没有传统的 position 概念
     // 此事件类型可能不适用
 }
 
-pub fn fill_damm_v2_add_liquidity_accounts(_e: &mut MeteoraDammV2AddLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_damm_v2_add_liquidity_accounts(
+    _e: &mut MeteoraDammV2AddLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // DAMM V2 流动性操作通过 initialize_virtual_pool 等指令
     // 事件数据已包含主要信息
 }
 
-pub fn fill_damm_v2_remove_liquidity_accounts(_e: &mut MeteoraDammV2RemoveLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_damm_v2_remove_liquidity_accounts(
+    _e: &mut MeteoraDammV2RemoveLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // DAMM V2 流动性移除操作
     // 事件数据已包含主要信息
 }
@@ -96,7 +108,10 @@ pub fn fill_pools_swap_accounts(_e: &mut MeteoraPoolsSwapEvent, _get: &AccountGe
 /// 12: userBToken
 /// 13: user
 /// ...
-pub fn fill_pools_add_liquidity_accounts(_e: &mut MeteoraPoolsAddLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_pools_add_liquidity_accounts(
+    _e: &mut MeteoraPoolsAddLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // 事件数据已包含主要信息
 }
 
@@ -111,7 +126,10 @@ pub fn fill_pools_add_liquidity_accounts(_e: &mut MeteoraPoolsAddLiquidityEvent,
 /// 5: aVault
 /// 6: bVault
 /// ...
-pub fn fill_pools_remove_liquidity_accounts(_e: &mut MeteoraPoolsRemoveLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_pools_remove_liquidity_accounts(
+    _e: &mut MeteoraPoolsRemoveLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // 事件数据已包含主要信息
 }
 
@@ -157,7 +175,10 @@ pub fn fill_dlmm_swap_accounts(_e: &mut MeteoraDlmmSwapEvent, _get: &AccountGett
 /// 10: binArrayUpper
 /// 11: sender
 /// ...
-pub fn fill_dlmm_add_liquidity_accounts(_e: &mut MeteoraDlmmAddLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_dlmm_add_liquidity_accounts(
+    _e: &mut MeteoraDlmmAddLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // 事件数据已包含主要信息
 }
 
@@ -177,6 +198,9 @@ pub fn fill_dlmm_add_liquidity_accounts(_e: &mut MeteoraDlmmAddLiquidityEvent, _
 /// 10: binArrayUpper
 /// 11: sender
 /// ...
-pub fn fill_dlmm_remove_liquidity_accounts(_e: &mut MeteoraDlmmRemoveLiquidityEvent, _get: &AccountGetter<'_>) {
+pub fn fill_dlmm_remove_liquidity_accounts(
+    _e: &mut MeteoraDlmmRemoveLiquidityEvent,
+    _get: &AccountGetter<'_>,
+) {
     // 事件数据已包含主要信息
 }

@@ -16,14 +16,15 @@
 //! SOLANA_RPC_URL=https://api.mainnet-beta.solana.com cargo run --example parse_pump_tx --release
 //! ```
 
+use sol_parser_sdk::parse_transaction_from_rpc;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::signature::Signature;
-use sol_parser_sdk::parse_transaction_from_rpc;
 use std::str::FromStr;
 
 fn main() {
     // 交易签名：优先从环境变量 TX_SIGNATURE 读取，否则用默认示例
-    let default_sig = "64srGF8CnTz9zPbdayWYmzs5aVRFBcfjDcidFVvBgAD25VMh52wr88vma7ytSbAZT3C5Giu5BPyGfNfLexLSrKhP";
+    let default_sig =
+        "64srGF8CnTz9zPbdayWYmzs5aVRFBcfjDcidFVvBgAD25VMh52wr88vma7ytSbAZT3C5Giu5BPyGfNfLexLSrKhP";
     let tx_sig = std::env::var("TX_SIGNATURE").unwrap_or_else(|_| default_sig.to_string());
 
     println!("=== PumpFun Transaction Parser ===\n");
@@ -37,8 +38,7 @@ fn main() {
     let client = RpcClient::new(rpc_url);
 
     // 解析签名
-    let signature = Signature::from_str(&tx_sig)
-        .expect("Failed to parse signature");
+    let signature = Signature::from_str(&tx_sig).expect("Failed to parse signature");
 
     // 使用 sol-parser-sdk 直接解析交易
     println!("\n=== Parsing with sol-parser-sdk ===");
@@ -50,7 +50,9 @@ fn main() {
             eprintln!("✗ Failed to parse transaction: {}", e);
             eprintln!("\nNote: If the error says 'Transaction not found (RPC returned null)', the tx may be pruned.");
             eprintln!("Use an archive RPC (e.g. Helius, QuickNode) or set SOLANA_RPC_URL.");
-            eprintln!("Example: export SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY");
+            eprintln!(
+                "Example: export SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY"
+            );
             std::process::exit(1);
         }
     };

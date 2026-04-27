@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Meteora DLMM 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Meteora DLMM 指令类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,14 +74,56 @@ pub fn parse_instruction(
     let data = &instruction_data[1..];
 
     match instruction_type {
-        0 => parse_initialize_lb_pair_instruction(data, accounts, signature, slot, tx_index, block_time_us),
-        1 => parse_initialize_bin_array_instruction(data, accounts, signature, slot, tx_index, block_time_us),
-        2 => parse_add_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us),
-        7 => parse_remove_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us),
-        8 => parse_initialize_position_instruction(data, accounts, signature, slot, tx_index, block_time_us),
+        0 => parse_initialize_lb_pair_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        1 => parse_initialize_bin_array_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        2 => parse_add_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        7 => parse_remove_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        8 => parse_initialize_position_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         11 => parse_swap_instruction(data, accounts, signature, slot, tx_index, block_time_us),
         13 => parse_claim_fee_instruction(data, accounts, signature, slot, tx_index, block_time_us),
-        14 => parse_close_position_instruction(data, accounts, signature, slot, tx_index, block_time_us),
+        14 => parse_close_position_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         _ => None,
     }
 }
@@ -162,10 +204,7 @@ fn parse_add_liquidity_instruction(
         pool,
         from: get_account(accounts, 1).unwrap_or_default(),
         position: get_account(accounts, 2).unwrap_or_default(),
-        amounts: [
-            amounts.get(0).copied().unwrap_or(0),
-            amounts.get(1).copied().unwrap_or(0),
-        ],
+        amounts: [amounts.get(0).copied().unwrap_or(0), amounts.get(1).copied().unwrap_or(0)],
         active_bin_id: 0, // 从日志中获取
     }))
 }
@@ -194,10 +233,7 @@ fn parse_remove_liquidity_instruction(
         pool,
         from: get_account(accounts, 1).unwrap_or_default(),
         position: get_account(accounts, 2).unwrap_or_default(),
-        amounts: [
-            amounts.get(0).copied().unwrap_or(0),
-            amounts.get(1).copied().unwrap_or(0),
-        ],
+        amounts: [amounts.get(0).copied().unwrap_or(0), amounts.get(1).copied().unwrap_or(0)],
         active_bin_id: 0, // 从日志中获取
     }))
 }
@@ -255,14 +291,14 @@ fn parse_swap_instruction(
         pool,
         from: get_account(accounts, 1).unwrap_or_default(),
         start_bin_id: 0, // 从日志填充
-        end_bin_id: 0, // 从日志填充
+        end_bin_id: 0,   // 从日志填充
         amount_in,
-        amount_out: 0, // 从日志填充
+        amount_out: 0,     // 从日志填充
         swap_for_y: false, // 从日志填充
-        fee: 0, // 从日志填充
-        protocol_fee: 0, // 从日志填充
-        fee_bps: 0, // 从日志填充
-        host_fee: 0, // 从日志填充
+        fee: 0,            // 从日志填充
+        protocol_fee: 0,   // 从日志填充
+        fee_bps: 0,        // 从日志填充
+        host_fee: 0,       // 从日志填充
     }))
 }
 

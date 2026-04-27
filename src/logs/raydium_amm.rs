@@ -2,9 +2,9 @@
 //!
 //! 使用 match discriminator 模式解析 Raydium AMM V4 事件
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
 use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Raydium AMM V4 日志事件 discriminator 常量
 pub mod discriminators {
@@ -22,7 +22,14 @@ pub const PROGRAM_ID: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
 /// 解析 Raydium AMM V4 日志
 #[inline]
-pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
+pub fn parse_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
 }
 
@@ -46,22 +53,22 @@ fn parse_structured_log(
     match discriminator {
         discriminators::SWAP_BASE_IN_EVENT => {
             parse_swap_base_in_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::SWAP_BASE_OUT_EVENT => {
             parse_swap_base_out_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::DEPOSIT_EVENT => {
             parse_deposit_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::WITHDRAW_EVENT => {
             parse_withdraw_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::INITIALIZE2_EVENT => {
             parse_initialize2_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::WITHDRAW_PNL_EVENT => {
             parse_withdraw_pnl_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         _ => None,
     }
 }
@@ -312,7 +319,8 @@ fn parse_swap_base_in_event(
 
     let minimum_amount_out = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4Swap(RaydiumAmmV4SwapEvent {
         metadata,
@@ -363,7 +371,8 @@ fn parse_swap_base_out_event(
 
     let amount_out = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4Swap(RaydiumAmmV4SwapEvent {
         metadata,
@@ -417,7 +426,8 @@ fn parse_deposit_event(
 
     let base_side = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4Deposit(RaydiumAmmV4DepositEvent {
         metadata,
@@ -460,7 +470,8 @@ fn parse_withdraw_event(
 
     let amount = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4Withdraw(RaydiumAmmV4WithdrawEvent {
         metadata,
@@ -518,7 +529,8 @@ fn parse_initialize2_event(
 
     let init_coin_amount = read_u64_le(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4Initialize2(RaydiumAmmV4Initialize2Event {
         metadata,
@@ -566,7 +578,8 @@ fn parse_withdraw_pnl_event(
 
     let pnl_owner = read_pubkey(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, amm, grpc_recv_us);
 
     Some(DexEvent::RaydiumAmmV4WithdrawPnl(RaydiumAmmV4WithdrawPnlEvent {
         metadata,
@@ -601,17 +614,38 @@ fn parse_text_log(
 ) -> Option<DexEvent> {
     // 检查是否是交换相关的日志
     if log.contains("swap") || log.contains("Swap") {
-        return parse_swap_log_fallback(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_swap_log_fallback(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     // 检查是否是存款相关的日志
     if log.contains("deposit") || log.contains("Deposit") {
-        return parse_deposit_log_fallback(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_deposit_log_fallback(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     // 检查是否是提取相关的日志
     if log.contains("withdraw") || log.contains("Withdraw") {
-        return parse_withdraw_log_fallback(log, signature, slot, tx_index, block_time_us, grpc_recv_us);
+        return parse_withdraw_log_fallback(
+            log,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
 
     None
@@ -635,16 +669,26 @@ fn parse_swap_log_fallback(
         .or_else(|| super::utils::text_parser::extract_number_from_text(log, "amountOut"))
         .unwrap_or(0);
 
-    let minimum_amount_out = super::utils::text_parser::extract_number_from_text(log, "minimum_amount_out")
-        .or_else(|| super::utils::text_parser::extract_number_from_text(log, "minimumAmountOut"))
-        .unwrap_or(0);
+    let minimum_amount_out =
+        super::utils::text_parser::extract_number_from_text(log, "minimum_amount_out")
+            .or_else(|| {
+                super::utils::text_parser::extract_number_from_text(log, "minimumAmountOut")
+            })
+            .unwrap_or(0);
 
     let max_amount_in = super::utils::text_parser::extract_number_from_text(log, "max_amount_in")
         .or_else(|| super::utils::text_parser::extract_number_from_text(log, "maxAmountIn"))
         .unwrap_or(0);
 
     let default_pubkey = Pubkey::default();
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, default_pubkey, grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        default_pubkey,
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumAmmV4Swap(RaydiumAmmV4SwapEvent {
         metadata,
@@ -682,9 +726,10 @@ fn parse_deposit_log_fallback(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    let max_coin_amount = super::utils::text_parser::extract_number_from_text(log, "max_coin_amount")
-        .or_else(|| super::utils::text_parser::extract_number_from_text(log, "maxCoinAmount"))
-        .unwrap_or(0);
+    let max_coin_amount =
+        super::utils::text_parser::extract_number_from_text(log, "max_coin_amount")
+            .or_else(|| super::utils::text_parser::extract_number_from_text(log, "maxCoinAmount"))
+            .unwrap_or(0);
 
     let max_pc_amount = super::utils::text_parser::extract_number_from_text(log, "max_pc_amount")
         .or_else(|| super::utils::text_parser::extract_number_from_text(log, "maxPcAmount"))
@@ -695,7 +740,14 @@ fn parse_deposit_log_fallback(
         .unwrap_or(0);
 
     let default_pubkey = Pubkey::default();
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, default_pubkey, grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        default_pubkey,
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumAmmV4Deposit(RaydiumAmmV4DepositEvent {
         metadata,
@@ -728,11 +780,17 @@ fn parse_withdraw_log_fallback(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    let amount = super::utils::text_parser::extract_number_from_text(log, "amount")
-        .unwrap_or(0);
+    let amount = super::utils::text_parser::extract_number_from_text(log, "amount").unwrap_or(0);
 
     let default_pubkey = Pubkey::default();
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, default_pubkey, grpc_recv_us);
+    let metadata = create_metadata_simple(
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        default_pubkey,
+        grpc_recv_us,
+    );
 
     Some(DexEvent::RaydiumAmmV4Withdraw(RaydiumAmmV4WithdrawEvent {
         metadata,

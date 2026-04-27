@@ -8,9 +8,12 @@
 //!
 //! Run with: cargo bench --bench zero_latency_optimizations
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use sol_parser_sdk::logs::utils::{read_string, read_string_ref, text_parser::{extract_text_field, extract_text_field_ref}};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use smallvec::SmallVec;
+use sol_parser_sdk::logs::utils::{
+    read_string, read_string_ref,
+    text_parser::{extract_text_field, extract_text_field_ref},
+};
 
 // ========================================================================
 // SmallVec vs Vec Benchmarks

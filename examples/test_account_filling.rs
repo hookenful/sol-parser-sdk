@@ -3,6 +3,7 @@
 //! This example debugs the account filling process to understand
 //! why accounts are showing as default Pubkeys.
 
+use base64::Engine as _;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_sdk::signature::Signature;
@@ -10,7 +11,8 @@ use solana_transaction_status::UiTransactionEncoding;
 use std::str::FromStr;
 
 fn main() {
-    let tx_sig = "3zsihbygW7hoKGtduAyDDFzp4E1eis8gaBzEzzNKr8ma39baffpFcphok9wHFgR3EauDe9vYYsVf4Puh5pZ6UJiS";
+    let tx_sig =
+        "3zsihbygW7hoKGtduAyDDFzp4E1eis8gaBzEzzNKr8ma39baffpFcphok9wHFgR3EauDe9vYYsVf4Puh5pZ6UJiS";
 
     println!("=== Account Filling Debug ===\n");
     println!("Signature: {}\n", tx_sig);
@@ -95,10 +97,8 @@ fn main() {
                         println!("    discriminator: {:?}", disc);
 
                         // Check if it's PumpSwap Sell
-                        const PUMPSWAP_SELL: [u8; 16] = [
-                            228, 69, 165, 46, 81, 203, 154, 29,
-                            62, 47, 55, 10, 165, 3, 220, 42,
-                        ];
+                        const PUMPSWAP_SELL: [u8; 16] =
+                            [228, 69, 165, 46, 81, 203, 154, 29, 62, 47, 55, 10, 165, 3, 220, 42];
 
                         if disc == PUMPSWAP_SELL {
                             println!("    ✓ This is PumpSwap Sell event!");
@@ -110,9 +110,9 @@ fn main() {
                             } else {
                                 0
                             };
-                            let total_accounts = total_keys +
-                                grpc_meta.loaded_writable_addresses.len() +
-                                grpc_meta.loaded_readonly_addresses.len();
+                            let total_accounts = total_keys
+                                + grpc_meta.loaded_writable_addresses.len()
+                                + grpc_meta.loaded_readonly_addresses.len();
 
                             println!("    Total accounts available: {}", total_accounts);
 
@@ -130,38 +130,63 @@ fn main() {
 
                             for (acc_idx, name) in account_names {
                                 if let Some(&tx_acc_idx) = inner_ix.accounts.get(acc_idx) {
-                                    println!("    {} (accounts[{}] = {})", name, acc_idx, tx_acc_idx);
+                                    println!(
+                                        "    {} (accounts[{}] = {})",
+                                        name, acc_idx, tx_acc_idx
+                                    );
 
                                     // Try to resolve
                                     if let Some(ref msg) = grpc_tx.message {
                                         if (tx_acc_idx as usize) < msg.account_keys.len() {
                                             let key_bytes = &msg.account_keys[tx_acc_idx as usize];
                                             if key_bytes.len() == 32 {
-                                                let pk = solana_sdk::pubkey::Pubkey::try_from(&key_bytes[..]).unwrap();
+                                                let pk = solana_sdk::pubkey::Pubkey::try_from(
+                                                    &key_bytes[..],
+                                                )
+                                                .unwrap();
                                                 println!("      → Resolved to: {}", pk);
                                             }
                                         } else {
-                                            let offset = (tx_acc_idx as usize) - msg.account_keys.len();
+                                            let offset =
+                                                (tx_acc_idx as usize) - msg.account_keys.len();
                                             if offset < grpc_meta.loaded_writable_addresses.len() {
-                                                let key_bytes = &grpc_meta.loaded_writable_addresses[offset];
+                                                let key_bytes =
+                                                    &grpc_meta.loaded_writable_addresses[offset];
                                                 if key_bytes.len() == 32 {
-                                                    let pk = solana_sdk::pubkey::Pubkey::try_from(&key_bytes[..]).unwrap();
+                                                    let pk = solana_sdk::pubkey::Pubkey::try_from(
+                                                        &key_bytes[..],
+                                                    )
+                                                    .unwrap();
                                                     println!("      → Resolved (writable): {}", pk);
                                                 }
                                             } else {
-                                                let ro_offset = offset - grpc_meta.loaded_writable_addresses.len();
-                                                if ro_offset < grpc_meta.loaded_readonly_addresses.len() {
-                                                    let key_bytes = &grpc_meta.loaded_readonly_addresses[ro_offset];
+                                                let ro_offset = offset
+                                                    - grpc_meta.loaded_writable_addresses.len();
+                                                if ro_offset
+                                                    < grpc_meta.loaded_readonly_addresses.len()
+                                                {
+                                                    let key_bytes = &grpc_meta
+                                                        .loaded_readonly_addresses[ro_offset];
                                                     if key_bytes.len() == 32 {
-                                                        let pk = solana_sdk::pubkey::Pubkey::try_from(&key_bytes[..]).unwrap();
-                                                        println!("      → Resolved (readonly): {}", pk);
+                                                        let pk =
+                                                            solana_sdk::pubkey::Pubkey::try_from(
+                                                                &key_bytes[..],
+                                                            )
+                                                            .unwrap();
+                                                        println!(
+                                                            "      → Resolved (readonly): {}",
+                                                            pk
+                                                        );
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 } else {
-                                    println!("    {} (accounts[{}]) - NOT IN ARRAY!", name, acc_idx);
+                                    println!(
+                                        "    {} (accounts[{}]) - NOT IN ARRAY!",
+                                        name, acc_idx
+                                    );
                                 }
                             }
                         }

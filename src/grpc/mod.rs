@@ -9,6 +9,7 @@
 pub mod buffers;
 pub mod client;
 pub mod config;
+pub mod deduper;
 pub mod event_parser;
 pub mod filter;
 pub mod instruction_parser; // 增强的 instruction 解析器
@@ -16,10 +17,13 @@ pub mod program_ids;
 pub mod types;
 
 // 重新导出主要API
-pub use client::YellowstoneGrpc;
+pub use client::YellowstoneGrpcClient;
+pub use client::YellowstoneGrpcClient as YellowstoneGrpc;
+pub use deduper::TxDeduper;
 pub use types::{
-    account_filter_memcmp, AccountFilter, ClientConfig, EventType as StreamingEventType,
-    EventTypeFilter, OrderMode, Protocol, SlotFilter, TransactionFilter,
+    account_filter_memcmp, AccountFilter, ClientConfig, CommitmentMode,
+    EventType as StreamingEventType, EventTypeFilter, OrderMode, Protocol, SlotFilter,
+    TransactionFilter,
 };
 
 // 事件解析器重新导出

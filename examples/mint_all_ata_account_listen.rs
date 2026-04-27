@@ -7,12 +7,12 @@
 //! Run: `cargo run --example mint_all_ata_account_listen --release`
 //! Optional: MINT=<pubkey> to monitor a specific mint (default: PUMP and USDC).
 
-use solana_sdk::pubkey::Pubkey;
 use sol_parser_sdk::grpc::{
     account_filter_memcmp, AccountFilter, ClientConfig, EventType, EventTypeFilter,
     TransactionFilter, YellowstoneGrpc,
 };
 use sol_parser_sdk::DexEvent;
+use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 
 #[tokio::main]
@@ -33,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = ClientConfig::default();
     let grpc = YellowstoneGrpc::new_with_config(
-        std::env::var("GRPC_ENDPOINT").unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
+        std::env::var("GRPC_ENDPOINT")
+            .unwrap_or_else(|_| "https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
         std::env::var("GRPC_AUTH_TOKEN").ok(),
         config,
     )?;
@@ -60,7 +61,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             if let Some(event) = queue_clone.pop() {
                 if let DexEvent::TokenAccount(e) = event {
-                    println!("TokenAccount pubkey={} amount={:?} owner={}", e.pubkey, e.amount, e.token_owner);
+                    println!(
+                        "TokenAccount pubkey={} amount={:?} owner={}",
+                        e.pubkey, e.amount, e.token_owner
+                    );
                 }
             } else {
                 tokio::task::yield_now().await;

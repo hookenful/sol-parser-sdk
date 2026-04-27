@@ -22,34 +22,24 @@ use solana_sdk::pubkey::Pubkey;
 /// Raydium CLMM inner instruction discriminators (16 bytes)
 pub mod discriminators {
     /// SwapEvent
-    pub const SWAP: [u8; 16] = [
-        248, 198, 158, 145, 225, 117, 135, 200,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const SWAP: [u8; 16] =
+        [248, 198, 158, 145, 225, 117, 135, 200, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// IncreaseLiquidityEvent
-    pub const INCREASE_LIQUIDITY: [u8; 16] = [
-        133, 29, 89, 223, 69, 238, 176, 10,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const INCREASE_LIQUIDITY: [u8; 16] =
+        [133, 29, 89, 223, 69, 238, 176, 10, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// DecreaseLiquidityEvent
-    pub const DECREASE_LIQUIDITY: [u8; 16] = [
-        160, 38, 208, 111, 104, 91, 44, 1,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const DECREASE_LIQUIDITY: [u8; 16] =
+        [160, 38, 208, 111, 104, 91, 44, 1, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// CreatePoolEvent
-    pub const CREATE_POOL: [u8; 16] = [
-        233, 146, 209, 142, 207, 104, 64, 188,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const CREATE_POOL: [u8; 16] =
+        [233, 146, 209, 142, 207, 104, 64, 188, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// CollectFeeEvent
-    pub const COLLECT_FEE: [u8; 16] = [
-        164, 152, 207, 99, 187, 104, 171, 119,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const COLLECT_FEE: [u8; 16] =
+        [164, 152, 207, 99, 187, 104, 171, 119, 155, 167, 108, 32, 122, 76, 173, 64];
 }
 
 #[inline]
@@ -112,10 +102,7 @@ fn parse_swap_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEve
 
     let event = borsh::from_slice::<RaydiumClmmSwapEvent>(&data[..SWAP_EVENT_SIZE]).ok()?;
 
-    Some(DexEvent::RaydiumClmmSwap(RaydiumClmmSwapEvent {
-        metadata,
-        ..event
-    }))
+    Some(DexEvent::RaydiumClmmSwap(RaydiumClmmSwapEvent { metadata, ..event }))
 }
 
 /// 零拷贝解析器 - Swap 事件
@@ -219,7 +206,10 @@ fn parse_increase_liquidity_inner_borsh(data: &[u8], metadata: EventMetadata) ->
 /// 零拷贝解析器 - IncreaseLiquidity 事件
 #[cfg(feature = "parse-zero-copy")]
 #[inline(always)]
-fn parse_increase_liquidity_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+fn parse_increase_liquidity_inner_zero_copy(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
     unsafe {
         if !check_length(data, 32 + 32 + 8 + 8 + 16) {
             return None;
@@ -294,7 +284,10 @@ fn parse_decrease_liquidity_inner_borsh(data: &[u8], metadata: EventMetadata) ->
 /// 零拷贝解析器 - DecreaseLiquidity 事件
 #[cfg(feature = "parse-zero-copy")]
 #[inline(always)]
-fn parse_decrease_liquidity_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+fn parse_decrease_liquidity_inner_zero_copy(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
     unsafe {
         if !check_length(data, 32 + 32 + 8 + 8 + 16) {
             return None;
@@ -361,10 +354,7 @@ fn parse_create_pool_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option
 
     let event = borsh::from_slice::<RaydiumClmmCreatePoolEvent>(&data[..EVENT_SIZE]).ok()?;
 
-    Some(DexEvent::RaydiumClmmCreatePool(RaydiumClmmCreatePoolEvent {
-        metadata,
-        ..event
-    }))
+    Some(DexEvent::RaydiumClmmCreatePool(RaydiumClmmCreatePoolEvent { metadata, ..event }))
 }
 
 /// 零拷贝解析器 - CreatePool 事件
@@ -439,10 +429,7 @@ fn parse_collect_fee_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option
 
     let event = borsh::from_slice::<RaydiumClmmCollectFeeEvent>(&data[..EVENT_SIZE]).ok()?;
 
-    Some(DexEvent::RaydiumClmmCollectFee(RaydiumClmmCollectFeeEvent {
-        metadata,
-        ..event
-    }))
+    Some(DexEvent::RaydiumClmmCollectFee(RaydiumClmmCollectFeeEvent { metadata, ..event }))
 }
 
 /// 零拷贝解析器 - CollectFee 事件

@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Meteora Pools 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Meteora Pools 指令类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,16 +82,26 @@ pub fn parse_instruction(
     match instruction_type {
         MeteoraPoolsInstruction::Swap => {
             parse_swap_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        MeteoraPoolsInstruction::AddLiquidity => {
-            parse_add_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        MeteoraPoolsInstruction::RemoveLiquidity => {
-            parse_remove_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        MeteoraPoolsInstruction::AddLiquidity => parse_add_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        MeteoraPoolsInstruction::RemoveLiquidity => parse_remove_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         MeteoraPoolsInstruction::CreatePool => {
             parse_create_pool_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         _ => None, // 其他指令暂不解析
     }
 }
@@ -119,9 +129,9 @@ fn parse_swap_instruction(
         metadata,
         in_amount,
         out_amount: minimum_out_amount, // 先用指令中的最小值，日志会覆盖实际值
-        trade_fee: 0, // 从日志中获取
-        admin_fee: 0, // 从日志中获取
-        host_fee: 0, // 从日志中获取
+        trade_fee: 0,                   // 从日志中获取
+        admin_fee: 0,                   // 从日志中获取
+        host_fee: 0,                    // 从日志中获取
     }))
 }
 

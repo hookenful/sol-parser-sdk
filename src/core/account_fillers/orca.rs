@@ -39,7 +39,10 @@ pub fn fill_whirlpool_swap_accounts(_e: &mut OrcaWhirlpoolSwapEvent, _get: &Acco
 /// 8: tokenVaultB
 /// 9: tickArrayLower
 /// 10: tickArrayUpper
-pub fn fill_whirlpool_liquidity_increased_accounts(e: &mut OrcaWhirlpoolLiquidityIncreasedEvent, get: &AccountGetter<'_>) {
+pub fn fill_whirlpool_liquidity_increased_accounts(
+    e: &mut OrcaWhirlpoolLiquidityIncreasedEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.position == Pubkey::default() {
         e.position = get(3);
     }
@@ -61,7 +64,10 @@ pub fn fill_whirlpool_liquidity_increased_accounts(e: &mut OrcaWhirlpoolLiquidit
 /// 8: tokenVaultB
 /// 9: tickArrayLower
 /// 10: tickArrayUpper
-pub fn fill_whirlpool_liquidity_decreased_accounts(e: &mut OrcaWhirlpoolLiquidityDecreasedEvent, get: &AccountGetter<'_>) {
+pub fn fill_whirlpool_liquidity_decreased_accounts(
+    e: &mut OrcaWhirlpoolLiquidityDecreasedEvent,
+    get: &AccountGetter<'_>,
+) {
     if e.position == Pubkey::default() {
         e.position = get(3);
     }

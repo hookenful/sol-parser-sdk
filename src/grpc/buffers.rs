@@ -45,12 +45,9 @@ impl SlotBuffer {
 
     /// 输出所有小于 current_slot 的事件
     pub fn flush_before(&mut self, current_slot: u64) -> Vec<DexEvent> {
-        let slots_to_flush: Vec<u64> = self.slots
-            .keys()
-            .filter(|&&s| s < current_slot)
-            .copied()
-            .collect();
-        
+        let slots_to_flush: Vec<u64> =
+            self.slots.keys().filter(|&&s| s < current_slot).copied().collect();
+
         let mut result = Vec::with_capacity(slots_to_flush.len() * 4);
         for slot in slots_to_flush {
             if let Some(mut events) = self.slots.remove(&slot) {
@@ -58,7 +55,7 @@ impl SlotBuffer {
                 result.extend(events.into_iter().map(|(_, e)| e));
             }
         }
-        
+
         if !result.is_empty() {
             self.last_flush_time = Some(Instant::now());
         }
@@ -69,14 +66,14 @@ impl SlotBuffer {
     pub fn flush_all(&mut self) -> Vec<DexEvent> {
         let all_slots: Vec<u64> = self.slots.keys().copied().collect();
         let mut result = Vec::with_capacity(all_slots.len() * 4);
-        
+
         for slot in all_slots {
             if let Some(mut events) = self.slots.remove(&slot) {
                 events.sort_unstable_by_key(|(idx, _)| *idx);
                 result.extend(events.into_iter().map(|(_, e)| e));
             }
         }
-        
+
         if !result.is_empty() {
             self.last_flush_time = Some(Instant::now());
         }
@@ -96,7 +93,7 @@ impl SlotBuffer {
     /// For filtered event streams where tx_index may not be continuous, use MicroBatch mode instead
     pub fn push_streaming(&mut self, slot: u64, tx_index: u64, event: DexEvent) -> Vec<DexEvent> {
         let mut result = Vec::new();
-        
+
         // When new slot arrives, release ALL events from previous slots (sorted)
         if slot > self.current_slot && self.current_slot > 0 {
             let old_slots: Vec<u64> = self.slots.keys().filter(|&&s| s < slot).copied().collect();
@@ -108,19 +105,19 @@ impl SlotBuffer {
                 self.streaming_watermarks.remove(&old_slot);
             }
         }
-        
+
         if slot > self.current_slot {
             self.current_slot = slot;
         }
-        
+
         // Check if this is the expected tx_index (continuous sequence)
         let next_expected = *self.streaming_watermarks.get(&slot).unwrap_or(&0);
-        
+
         if tx_index == next_expected {
             // Expected index: release immediately
             result.push(event);
             let mut watermark = next_expected + 1;
-            
+
             // Release buffered consecutive events
             if let Some(buffered) = self.slots.get_mut(&slot) {
                 buffered.sort_unstable_by_key(|(idx, _)| *idx);
@@ -135,7 +132,7 @@ impl SlotBuffer {
             self.slots.entry(slot).or_default().push((tx_index, event));
         }
         // tx_index < next_expected: duplicate event, ignore
-        
+
         if !result.is_empty() {
             self.last_flush_time = Some(Instant::now());
         }
@@ -170,15 +167,19 @@ pub struct MicroBatchBuffer {
 impl MicroBatchBuffer {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            events: Vec::with_capacity(64),
-            window_start_us: 0,
-        }
+        Self { events: Vec::with_capacity(64), window_start_us: 0 }
     }
 
     /// 添加事件到窗口，返回是否需要刷新
     #[inline]
-    pub fn push(&mut self, slot: u64, tx_index: u64, event: DexEvent, now_us: i64, window_us: u64) -> bool {
+    pub fn push(
+        &mut self,
+        slot: u64,
+        tx_index: u64,
+        event: DexEvent,
+        now_us: i64,
+        window_us: u64,
+    ) -> bool {
         if self.events.is_empty() {
             self.window_start_us = now_us;
         }
@@ -192,15 +193,13 @@ impl MicroBatchBuffer {
         if self.events.is_empty() {
             return Vec::new();
         }
-        
+
         // 按 (slot, tx_index) 排序
         self.events.sort_unstable_by_key(|(slot, tx_index, _)| (*slot, *tx_index));
-        
-        let result: Vec<DexEvent> = std::mem::take(&mut self.events)
-            .into_iter()
-            .map(|(_, _, event)| event)
-            .collect();
-        
+
+        let result: Vec<DexEvent> =
+            std::mem::take(&mut self.events).into_iter().map(|(_, _, event)| event).collect();
+
         self.window_start_us = 0;
         result
     }

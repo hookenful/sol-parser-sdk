@@ -150,7 +150,10 @@ pub fn fill_liquidity_added_accounts(_e: &mut PumpSwapLiquidityAdded, _get: &Acc
 ///
 /// 注意：PumpSwap IDL 中没有明确的 removeLiquidity 指令
 /// 此事件可能通过其他机制触发或暂未实现
-pub fn fill_liquidity_removed_accounts(_e: &mut PumpSwapLiquidityRemoved, _get: &AccountGetter<'_>) {
+pub fn fill_liquidity_removed_accounts(
+    _e: &mut PumpSwapLiquidityRemoved,
+    _get: &AccountGetter<'_>,
+) {
     // 大部分字段已从事件数据解析
     // PumpSwapLiquidityRemoved 事件结构不包含账户字段，只有数值字段
 }

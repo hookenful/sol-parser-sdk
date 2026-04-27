@@ -146,10 +146,7 @@ mod tests {
         };
         let getter: &AccountGetter = &get;
 
-        let mut e = PumpFunTradeEvent {
-            account: None,
-            ..Default::default()
-        };
+        let mut e = PumpFunTradeEvent { account: None, ..Default::default() };
 
         fill_trade_accounts(&mut e, getter);
         assert_eq!(

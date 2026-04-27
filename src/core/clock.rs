@@ -124,9 +124,7 @@ impl HighPerformanceClock {
 
         // 计算预期的 UTC 时间戳（基于单调时钟）
         let expected_utc = self.base_timestamp_us
-            + current_monotonic
-                .duration_since(self.base_instant)
-                .as_micros() as i64;
+            + current_monotonic.duration_since(self.base_instant).as_micros() as i64;
 
         // 计算漂移量
         let drift_us = current_utc - expected_utc;
@@ -239,10 +237,14 @@ pub fn now_us() -> i64 {
     {
         let clock_id = {
             #[cfg(target_os = "linux")]
-            { libc::CLOCK_REALTIME_COARSE }
+            {
+                libc::CLOCK_REALTIME_COARSE
+            }
 
             #[cfg(not(target_os = "linux"))]
-            { libc::CLOCK_REALTIME }
+            {
+                libc::CLOCK_REALTIME
+            }
         };
 
         let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -314,10 +316,7 @@ mod tests {
 
         // 验证时间戳单调递增
         for i in 1..timestamps.len() {
-            assert!(
-                timestamps[i] >= timestamps[i - 1],
-                "时间戳应该单调递增"
-            );
+            assert!(timestamps[i] >= timestamps[i - 1], "时间戳应该单调递增");
         }
     }
 

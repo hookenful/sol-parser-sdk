@@ -29,7 +29,6 @@
 
 use crate::core::events::*;
 
-
 // ============================================================================
 // Inner Instruction Discriminators (16 bytes)
 // ============================================================================
@@ -40,20 +39,16 @@ pub mod discriminators {
     /// discriminator = sha256("event:TradeEvent")[..16]
     pub const TRADE_EVENT: [u8; 16] = [
         189, 219, 127, 211, 78, 230, 97, 238, // 前8字节
-        155, 167, 108, 32, 122, 76, 173, 64,  // 后8字节
+        155, 167, 108, 32, 122, 76, 173, 64, // 后8字节
     ];
 
     /// CreateTokenEvent discriminator
-    pub const CREATE_TOKEN_EVENT: [u8; 16] = [
-        27, 114, 169, 77, 222, 235, 99, 118,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const CREATE_TOKEN_EVENT: [u8; 16] =
+        [27, 114, 169, 77, 222, 235, 99, 118, 155, 167, 108, 32, 122, 76, 173, 64];
 
     /// MigrateEvent discriminator (PumpAmm migration)
-    pub const COMPLETE_PUMP_AMM_MIGRATION_EVENT: [u8; 16] = [
-        189, 233, 93, 185, 92, 148, 234, 148,
-        155, 167, 108, 32, 122, 76, 173, 64,
-    ];
+    pub const COMPLETE_PUMP_AMM_MIGRATION_EVENT: [u8; 16] =
+        [189, 233, 93, 185, 92, 148, 234, 148, 155, 167, 108, 32, 122, 76, 173, 64];
 }
 
 // ============================================================================
@@ -140,7 +135,9 @@ pub fn parse_pumpfun_inner_instruction(
     match discriminator {
         &discriminators::TRADE_EVENT => parse_trade_event_inner(data, metadata, is_created_buy),
         &discriminators::CREATE_TOKEN_EVENT => parse_create_event_inner(data, metadata),
-        &discriminators::COMPLETE_PUMP_AMM_MIGRATION_EVENT => parse_migrate_event_inner(data, metadata),
+        &discriminators::COMPLETE_PUMP_AMM_MIGRATION_EVENT => {
+            parse_migrate_event_inner(data, metadata)
+        }
         _ => None,
     }
 }
@@ -153,7 +150,11 @@ pub fn parse_pumpfun_inner_instruction(
 ///
 /// 根据编译时的 feature flag 自动选择解析器实现
 #[inline(always)]
-fn parse_trade_event_inner(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
+fn parse_trade_event_inner(
+    data: &[u8],
+    metadata: EventMetadata,
+    is_created_buy: bool,
+) -> Option<DexEvent> {
     #[cfg(feature = "parse-borsh")]
     {
         parse_trade_event_inner_borsh(data, metadata, is_created_buy)
@@ -170,7 +171,11 @@ fn parse_trade_event_inner(data: &[u8], metadata: EventMetadata, is_created_buy:
 /// **优点**: 类型安全、代码简洁、自动验证
 #[cfg(feature = "parse-borsh")]
 #[inline(always)]
-fn parse_trade_event_inner_borsh(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
+fn parse_trade_event_inner_borsh(
+    data: &[u8],
+    metadata: EventMetadata,
+    is_created_buy: bool,
+) -> Option<DexEvent> {
     // PumpFun TradeEvent 不是固定大小，因为包含 String 字段
     // 我们需要解析整个数据
     let mut event = borsh::from_slice::<PumpFunTradeEvent>(data).ok()?;
@@ -192,7 +197,11 @@ fn parse_trade_event_inner_borsh(data: &[u8], metadata: EventMetadata, is_create
 /// **优点**: 最快、零拷贝、无验证开销
 #[cfg(feature = "parse-zero-copy")]
 #[inline(always)]
-fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata, is_created_buy: bool) -> Option<DexEvent> {
+fn parse_trade_event_inner_zero_copy(
+    data: &[u8],
+    metadata: EventMetadata,
+    is_created_buy: bool,
+) -> Option<DexEvent> {
     unsafe {
         // 快速边界检查
         if data.len() < 32 + 8 + 8 + 1 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 8 + 8 + 32 + 8 + 8 {
@@ -250,39 +259,24 @@ fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata, is_cr
         offset += 8;
 
         // 可选字段
-        let track_volume = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let track_volume =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
 
-        let total_unclaimed_tokens = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let total_unclaimed_tokens =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let total_claimed_tokens = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let total_claimed_tokens =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let current_sol_volume = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let current_sol_volume =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
-        let last_update_timestamp = if offset + 8 <= data.len() {
-            read_i64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let last_update_timestamp =
+            if offset + 8 <= data.len() { read_i64_unchecked(data, offset) } else { 0 };
         offset += 8;
 
         let (ix_name, ix_name_len) = if offset + 4 <= data.len() {
@@ -297,23 +291,13 @@ fn parse_trade_event_inner_zero_copy(data: &[u8], metadata: EventMetadata, is_cr
         offset += ix_name_len;
 
         // TradeEvent 新增字段 (PUMP_CASHBACK_README): mayhem_mode, cashback_fee_basis_points, cashback
-        let mayhem_mode = if offset + 1 <= data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let mayhem_mode =
+            if offset + 1 <= data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
-        let cashback_fee_basis_points = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback_fee_basis_points =
+            if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
         offset += 8;
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         // Inner instruction 只包含日志数据，不含指令上下文账户；is_created_buy 由外层根据同 tx 是否含 create 传入
         let trade_event = PumpFunTradeEvent {
@@ -446,19 +430,13 @@ fn parse_create_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> O
         };
         offset += 32;
 
-        let is_mayhem_mode = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let is_mayhem_mode =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
         offset += 1;
 
         // IDL CreateEvent 最后一列: is_cashback_enabled
-        let is_cashback_enabled = if offset < data.len() {
-            read_bool_unchecked(data, offset)
-        } else {
-            false
-        };
+        let is_cashback_enabled =
+            if offset < data.len() { read_bool_unchecked(data, offset) } else { false };
 
         Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
             metadata,

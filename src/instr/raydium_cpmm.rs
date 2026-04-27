@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Raydium CPMM 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Raydium CPMM discriminator 常量
 pub mod discriminators {
@@ -38,19 +38,24 @@ pub fn parse_instruction(
     match discriminator {
         discriminators::SWAP_BASE_IN => {
             parse_swap_base_in_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        discriminators::SWAP_BASE_OUT => {
-            parse_swap_base_out_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        discriminators::SWAP_BASE_OUT => parse_swap_base_out_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         discriminators::INITIALIZE => {
             parse_initialize_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         discriminators::DEPOSIT => {
             parse_deposit_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         discriminators::WITHDRAW => {
             parse_withdraw_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
         _ => None,
     }
 }
@@ -79,14 +84,13 @@ fn parse_swap_base_in_instruction(
 
         // IDL SwapEvent 事件字段 - 从日志填充，这里设置默认值
         pool_id: Pubkey::default(), // 将从日志填充
-        input_vault_before: 0, // 将从日志填充
-        output_vault_before: 0, // 将从日志填充
-        input_amount: 0, // 将从日志填充
-        output_amount: 0, // 将从日志填充
-        input_transfer_fee: 0, // 将从日志填充
-        output_transfer_fee: 0, // 将从日志填充
+        input_vault_before: 0,      // 将从日志填充
+        output_vault_before: 0,     // 将从日志填充
+        input_amount: 0,            // 将从日志填充
+        output_amount: 0,           // 将从日志填充
+        input_transfer_fee: 0,      // 将从日志填充
+        output_transfer_fee: 0,     // 将从日志填充
         base_input: true,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in,
@@ -103,7 +107,6 @@ fn parse_swap_base_in_instruction(
         // output_vault: Pubkey::default(),
         // input_token_mint: Pubkey::default(),
         // output_token_mint: Pubkey::default(),
-
     }))
 }
 
@@ -131,14 +134,13 @@ fn parse_swap_base_out_instruction(
 
         // IDL SwapEvent 事件字段 - 从日志填充，这里设置默认值
         pool_id: Pubkey::default(), // 将从日志填充
-        input_vault_before: 0, // 将从日志填充
-        output_vault_before: 0, // 将从日志填充
-        input_amount: 0, // 将从日志填充
-        output_amount: 0, // 将从日志填充
-        input_transfer_fee: 0, // 将从日志填充
-        output_transfer_fee: 0, // 将从日志填充
+        input_vault_before: 0,      // 将从日志填充
+        output_vault_before: 0,     // 将从日志填充
+        input_amount: 0,            // 将从日志填充
+        output_amount: 0,           // 将从日志填充
+        input_transfer_fee: 0,      // 将从日志填充
+        output_transfer_fee: 0,     // 将从日志填充
         base_input: false,
-
         // 暂时注释，以后会用，AI禁止改动
         // 指令参数字段
         // amount_in: maximum_amount_in,
@@ -155,7 +157,6 @@ fn parse_swap_base_out_instruction(
         // output_vault: Pubkey::default(),
         // input_token_mint: Pubkey::default(),
         // output_token_mint: Pubkey::default(),
-
     }))
 }
 

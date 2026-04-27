@@ -8,7 +8,8 @@ use solana_transaction_status::UiTransactionEncoding;
 use std::str::FromStr;
 
 fn main() {
-    let tx_sig = "5curEt85cQhAK6R9pntSJ4fmYCiPEG22NjZyGrnGSbNwAkHJMN25T9Efp1n9Tf9vGXhnDXMQYrCNpoRHQTMcZ1s9";
+    let tx_sig =
+        "5curEt85cQhAK6R9pntSJ4fmYCiPEG22NjZyGrnGSbNwAkHJMN25T9Efp1n9Tf9vGXhnDXMQYrCNpoRHQTMcZ1s9";
 
     println!("=== Debug PumpFun Transaction ===\n");
     println!("Signature: {}\n", tx_sig);
@@ -48,7 +49,8 @@ fn main() {
 
         // Check loaded addresses
         println!("\n=== Loaded Addresses ===");
-        let loaded_opt: Option<solana_transaction_status::UiLoadedAddresses> = meta.loaded_addresses.clone().into();
+        let loaded_opt: Option<solana_transaction_status::UiLoadedAddresses> =
+            meta.loaded_addresses.clone().into();
         if let Some(ref loaded) = loaded_opt {
             println!("Writable: {} addresses", loaded.writable.len());
             for (i, addr) in loaded.writable.iter().enumerate() {
@@ -67,8 +69,11 @@ fn main() {
         if let Some(logs) = logs {
             println!("\n=== Logs ({} lines) ===", logs.len());
             for (i, log) in logs.iter().enumerate() {
-                if log.contains("Program 6EF8") || log.contains("Program pAMM") ||
-                   log.contains("invoke") || log.contains("success") {
+                if log.contains("Program 6EF8")
+                    || log.contains("Program pAMM")
+                    || log.contains("invoke")
+                    || log.contains("success")
+                {
                     println!("{}: {}", i, log);
                 }
             }
@@ -80,35 +85,48 @@ fn main() {
             println!("\n=== Inner Instructions ({} groups) ===", inner.len());
 
             // Get account keys from transaction for program ID lookup
-            let account_keys: Vec<solana_sdk::pubkey::Pubkey> = if let solana_transaction_status::EncodedTransaction::Binary(data, _) = &rpc_tx.transaction.transaction {
-                let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
-                let versioned_tx: solana_sdk::transaction::VersionedTransaction =
-                    bincode::deserialize(&bytes).unwrap();
-                match &versioned_tx.message {
-                    solana_sdk::message::VersionedMessage::Legacy(m) => m.account_keys.clone(),
-                    solana_sdk::message::VersionedMessage::V0(m) => m.account_keys.clone(),
-                }
-            } else {
-                vec![]
-            };
+            let account_keys: Vec<solana_sdk::pubkey::Pubkey> =
+                if let solana_transaction_status::EncodedTransaction::Binary(data, _) =
+                    &rpc_tx.transaction.transaction
+                {
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+                    let versioned_tx: solana_sdk::transaction::VersionedTransaction =
+                        bincode::deserialize(&bytes).unwrap();
+                    match &versioned_tx.message {
+                        solana_sdk::message::VersionedMessage::Legacy(m) => m.account_keys.clone(),
+                        solana_sdk::message::VersionedMessage::V0(m) => m.account_keys.clone(),
+                    }
+                } else {
+                    vec![]
+                };
 
             for (_idx, inner_group) in inner.iter().enumerate() {
-                println!("\nOuter instruction #{}, {} inner instructions:",
-                    inner_group.index, inner_group.instructions.len());
+                println!(
+                    "\nOuter instruction #{}, {} inner instructions:",
+                    inner_group.index,
+                    inner_group.instructions.len()
+                );
 
                 for (i, ix) in inner_group.instructions.iter().enumerate() {
                     if let solana_transaction_status::UiInstruction::Compiled(compiled) = ix {
-                        let data_bytes = bs58::decode(&compiled.data).into_vec().unwrap_or_default();
+                        let data_bytes =
+                            bs58::decode(&compiled.data).into_vec().unwrap_or_default();
 
                         // Get program ID
-                        let program_id = if (compiled.program_id_index as usize) < account_keys.len() {
-                            Some(&account_keys[compiled.program_id_index as usize])
-                        } else {
-                            None
-                        };
+                        let program_id =
+                            if (compiled.program_id_index as usize) < account_keys.len() {
+                                Some(&account_keys[compiled.program_id_index as usize])
+                            } else {
+                                None
+                            };
 
-                        println!("  Inner #{}: program_id_index={}, accounts={:?}, data_len={}",
-                            i, compiled.program_id_index, compiled.accounts, data_bytes.len());
+                        println!(
+                            "  Inner #{}: program_id_index={}, accounts={:?}, data_len={}",
+                            i,
+                            compiled.program_id_index,
+                            compiled.accounts,
+                            data_bytes.len()
+                        );
 
                         if let Some(pid) = program_id {
                             println!("    Program ID: {}", pid);
@@ -140,7 +158,9 @@ fn main() {
 
     // Print main instructions
     println!("\n=== Main Instructions ===");
-    if let solana_transaction_status::EncodedTransaction::Binary(data, _) = &rpc_tx.transaction.transaction {
+    if let solana_transaction_status::EncodedTransaction::Binary(data, _) =
+        &rpc_tx.transaction.transaction
+    {
         let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
         let versioned_tx: solana_sdk::transaction::VersionedTransaction =
             bincode::deserialize(&bytes).unwrap();
@@ -154,8 +174,12 @@ fn main() {
                 }
                 println!("\nInstructions: {}", m.instructions.len());
                 for (i, ix) in m.instructions.iter().enumerate() {
-                    println!("  Instruction #{}: program_id_index={}, data_len={}",
-                        i, ix.program_id_index, ix.data.len());
+                    println!(
+                        "  Instruction #{}: program_id_index={}, data_len={}",
+                        i,
+                        ix.program_id_index,
+                        ix.data.len()
+                    );
                     let program_key = &m.account_keys[ix.program_id_index as usize];
                     println!("    Program: {}", program_key);
 
@@ -173,8 +197,12 @@ fn main() {
                 }
                 println!("\nInstructions: {}", m.instructions.len());
                 for (i, ix) in m.instructions.iter().enumerate() {
-                    println!("  Instruction #{}: program_id_index={}, data_len={}",
-                        i, ix.program_id_index, ix.data.len());
+                    println!(
+                        "  Instruction #{}: program_id_index={}, data_len={}",
+                        i,
+                        ix.program_id_index,
+                        ix.data.len()
+                    );
                     if (ix.program_id_index as usize) < m.account_keys.len() {
                         let program_key = &m.account_keys[ix.program_id_index as usize];
                         println!("    Program: {}", program_key);
@@ -202,8 +230,14 @@ fn main() {
                 // Manually parse to see what's happening
                 if let Ok((grpc_meta, grpc_tx)) = sol_parser_sdk::convert_rpc_to_grpc(&rpc_tx) {
                     println!("\n=== Converted gRPC Format ===");
-                    println!("Loaded writable addresses: {}", grpc_meta.loaded_writable_addresses.len());
-                    println!("Loaded readonly addresses: {}", grpc_meta.loaded_readonly_addresses.len());
+                    println!(
+                        "Loaded writable addresses: {}",
+                        grpc_meta.loaded_writable_addresses.len()
+                    );
+                    println!(
+                        "Loaded readonly addresses: {}",
+                        grpc_meta.loaded_readonly_addresses.len()
+                    );
                     println!("Inner instructions groups: {}", grpc_meta.inner_instructions.len());
 
                     if let Some(msg) = &grpc_tx.message {
@@ -211,30 +245,43 @@ fn main() {
                         println!("Main instructions: {}", msg.instructions.len());
 
                         for (i, ix) in msg.instructions.iter().enumerate() {
-                            println!("\nMain instruction #{}: program_id_index={}, data_len={}",
-                                i, ix.program_id_index, ix.data.len());
+                            println!(
+                                "\nMain instruction #{}: program_id_index={}, data_len={}",
+                                i,
+                                ix.program_id_index,
+                                ix.data.len()
+                            );
                         }
 
                         for (idx, inner_group) in grpc_meta.inner_instructions.iter().enumerate() {
-                            println!("\n=== Inner Group #{} (outer_idx={}) ===", idx, inner_group.index);
+                            println!(
+                                "\n=== Inner Group #{} (outer_idx={}) ===",
+                                idx, inner_group.index
+                            );
                             println!("  {} inner instructions", inner_group.instructions.len());
 
                             for (i, inner_ix) in inner_group.instructions.iter().enumerate() {
-                                println!("  Inner #{}: program_id_index={}, data_len={}",
-                                    i, inner_ix.program_id_index, inner_ix.data.len());
+                                println!(
+                                    "  Inner #{}: program_id_index={}, data_len={}",
+                                    i,
+                                    inner_ix.program_id_index,
+                                    inner_ix.data.len()
+                                );
 
                                 // Try to get the program ID
-                                let total_keys = msg.account_keys.len() +
-                                    grpc_meta.loaded_writable_addresses.len() +
-                                    grpc_meta.loaded_readonly_addresses.len();
+                                let total_keys = msg.account_keys.len()
+                                    + grpc_meta.loaded_writable_addresses.len()
+                                    + grpc_meta.loaded_readonly_addresses.len();
 
                                 println!("    Total available keys: {}", total_keys);
 
                                 if (inner_ix.program_id_index as usize) < total_keys {
                                     println!("    ✓ Program ID index is valid");
                                 } else {
-                                    println!("    ✗ Program ID index {} exceeds total keys {}",
-                                        inner_ix.program_id_index, total_keys);
+                                    println!(
+                                        "    ✗ Program ID index {} exceeds total keys {}",
+                                        inner_ix.program_id_index, total_keys
+                                    );
                                 }
 
                                 if inner_ix.data.len() >= 16 {

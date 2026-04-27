@@ -2,10 +2,10 @@
 //!
 //! 使用 match discriminator 模式解析 Orca Whirlpool 指令
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
-use crate::core::events::*;
-use super::utils::*;
 use super::program_ids;
+use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 /// Orca Whirlpool 指令类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,16 +127,35 @@ pub fn parse_instruction(
     match instruction_type {
         OrcaWhirlpoolInstruction::Swap | OrcaWhirlpoolInstruction::SwapV2 => {
             parse_swap_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        OrcaWhirlpoolInstruction::IncreaseLiquidity | OrcaWhirlpoolInstruction::IncreaseLiquidityV2 => {
-            parse_increase_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
-        OrcaWhirlpoolInstruction::DecreaseLiquidity | OrcaWhirlpoolInstruction::DecreaseLiquidityV2 => {
-            parse_decrease_liquidity_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+        }
+        OrcaWhirlpoolInstruction::IncreaseLiquidity
+        | OrcaWhirlpoolInstruction::IncreaseLiquidityV2 => parse_increase_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
+        OrcaWhirlpoolInstruction::DecreaseLiquidity
+        | OrcaWhirlpoolInstruction::DecreaseLiquidityV2 => parse_decrease_liquidity_instruction(
+            data,
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+        ),
         OrcaWhirlpoolInstruction::InitializePool | OrcaWhirlpoolInstruction::InitializePoolV2 => {
-            parse_initialize_pool_instruction(data, accounts, signature, slot, tx_index, block_time_us)
-        },
+            parse_initialize_pool_instruction(
+                data,
+                accounts,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+            )
+        }
         _ => None, // 其他指令暂不解析
     }
 }
@@ -176,34 +195,34 @@ fn parse_swap_instruction(
         whirlpool,
         a_to_b,
         pre_sqrt_price: sqrt_price_limit, // 从指令获取初始值，日志会覆盖
-        post_sqrt_price: 0, // 从日志中获取
+        post_sqrt_price: 0,               // 从日志中获取
         input_amount: if amount_specified_is_input { amount } else { 0 },
         output_amount: if !amount_specified_is_input {
             amount
         } else {
             other_amount_threshold // 使用阈值作为初始值，日志会覆盖
         },
-        input_transfer_fee: 0, // 从日志中获取
+        input_transfer_fee: 0,  // 从日志中获取
         output_transfer_fee: 0, // 从日志中获取
-        lp_fee: 0, // 从日志中获取
-        protocol_fee: 0, // 从日志中获取
+        lp_fee: 0,              // 从日志中获取
+        protocol_fee: 0,        // 从日志中获取
 
-        // 暂时注释，以后会用，AI禁止改动
-        // 指令参数字段
-        // amount,
-        // amount_specified_is_input,
-        // other_amount_threshold,
-        // sqrt_price_limit,
+                                // 暂时注释，以后会用，AI禁止改动
+                                // 指令参数字段
+                                // amount,
+                                // amount_specified_is_input,
+                                // other_amount_threshold,
+                                // sqrt_price_limit,
 
-        // 指令账户字段 - 从account_filler填充
-        // token_authority: Pubkey::default(),
-        // token_owner_account_a: Pubkey::default(),
-        // token_vault_a: Pubkey::default(),
-        // token_owner_account_b: Pubkey::default(),
-        // token_vault_b: Pubkey::default(),
-        // tick_array_0: Pubkey::default(),
-        // tick_array_1: Pubkey::default(),
-        // tick_array_2: Pubkey::default(),
+                                // 指令账户字段 - 从account_filler填充
+                                // token_authority: Pubkey::default(),
+                                // token_owner_account_a: Pubkey::default(),
+                                // token_vault_a: Pubkey::default(),
+                                // token_owner_account_b: Pubkey::default(),
+                                // token_vault_b: Pubkey::default(),
+                                // tick_array_0: Pubkey::default(),
+                                // tick_array_1: Pubkey::default(),
+                                // tick_array_2: Pubkey::default(),
     }))
 }
 
@@ -239,8 +258,8 @@ fn parse_increase_liquidity_instruction(
         liquidity: liquidity_amount,
         token_a_amount: token_max_a, // 从指令获取最大值，日志会覆盖实际值
         token_b_amount: token_max_b, // 从指令获取最大值，日志会覆盖实际值
-        token_a_transfer_fee: 0, // 从日志中获取
-        token_b_transfer_fee: 0, // 从日志中获取
+        token_a_transfer_fee: 0,     // 从日志中获取
+        token_b_transfer_fee: 0,     // 从日志中获取
     }))
 }
 
@@ -276,8 +295,8 @@ fn parse_decrease_liquidity_instruction(
         liquidity: liquidity_amount,
         token_a_amount: token_min_a, // 从指令获取最小值，日志会覆盖实际值
         token_b_amount: token_min_b, // 从指令获取最小值，日志会覆盖实际值
-        token_a_transfer_fee: 0, // 从日志中获取
-        token_b_transfer_fee: 0, // 从日志中获取
+        token_a_transfer_fee: 0,     // 从日志中获取
+        token_b_transfer_fee: 0,     // 从日志中获取
     }))
 }
 

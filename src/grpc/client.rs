@@ -7,14 +7,15 @@
 //! - Ordered: 1-50ms 完全有序
 
 use super::buffers::{MicroBatchBuffer, SlotBuffer};
+use super::deduper::TxDeduper;
 use super::types::*;
-use crate::core::{EventMetadata, now_micros};  // 导入高性能时钟
+use crate::core::{now_micros, EventMetadata}; // 导入高性能时钟
 use crate::instr::read_pubkey_fast;
 use crate::logs::timestamp_to_microseconds;
 use crate::DexEvent;
 use crossbeam_queue::ArrayQueue;
 use futures::{SinkExt, StreamExt};
-use log::error;
+use log::{error, info};
 use memchr::memmem;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -31,22 +32,32 @@ static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
 // ==================== YellowstoneGrpc 客户端 ====================
 
 #[derive(Clone)]
-pub struct YellowstoneGrpc {
+struct StreamClient {
     endpoint: String,
     token: Option<String>,
     config: ClientConfig,
-    control_tx: Arc<Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
+    yellowstone_control_tx: Arc<Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
+    last_filters: Arc<Mutex<SubscriptionFilters>>,
+    tx_deduper: Option<Arc<TxDeduper>>,
 }
 
-impl YellowstoneGrpc {
-    pub fn new(endpoint: String, token: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
-        crate::warmup::warmup_parser();
-        Ok(Self {
-            endpoint,
-            token,
-            config: ClientConfig::default(),
-            control_tx: Arc::new(Mutex::new(None)),
-        })
+#[derive(Default)]
+struct SubscriptionFilters {
+    transaction_filters: Vec<TransactionFilter>,
+    account_filters: Vec<AccountFilter>,
+}
+
+#[derive(Clone)]
+pub struct YellowstoneGrpcClient {
+    inner: StreamClient,
+}
+
+impl YellowstoneGrpcClient {
+    pub fn new(
+        endpoint: String,
+        token: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_with_config(endpoint, token, ClientConfig::low_latency())
     }
 
     pub fn new_with_config(
@@ -54,8 +65,12 @@ impl YellowstoneGrpc {
         token: Option<String>,
         config: ClientConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        crate::warmup::warmup_parser();
-        Ok(Self { endpoint, token, config, control_tx: Arc::new(Mutex::new(None)) })
+        Ok(Self { inner: StreamClient::new(endpoint, token, config) })
+    }
+
+    pub fn with_tx_deduper(mut self, tx_deduper: Arc<TxDeduper>) -> Self {
+        self.inner.tx_deduper = Some(tx_deduper);
+        self
     }
 
     /// 订阅 DEX 事件（自动重连）
@@ -65,23 +80,9 @@ impl YellowstoneGrpc {
         account_filters: Vec<AccountFilter>,
         event_type_filter: Option<EventTypeFilter>,
     ) -> Result<Arc<ArrayQueue<DexEvent>>, Box<dyn std::error::Error>> {
-        let queue = Arc::new(ArrayQueue::new(100_000));
-        let queue_clone = Arc::clone(&queue);
-        let self_clone = self.clone();
-
-        tokio::spawn(async move {
-            let mut delay = 1u64;
-            loop {
-                match self_clone.stream_events(&transaction_filters, &account_filters, &event_type_filter, &queue_clone).await {
-                    Ok(_) => delay = 1,
-                    Err(e) => println!("❌ gRPC error: {} - retry in {}s", e, delay),
-                }
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                delay = (delay * 2).min(60);
-            }
-        });
-
-        Ok(queue)
+        self.inner
+            .subscribe_dex_events(transaction_filters, account_filters, event_type_filter)
+            .await
     }
 
     /// 动态更新订阅过滤器
@@ -90,17 +91,91 @@ impl YellowstoneGrpc {
         transaction_filters: Vec<TransactionFilter>,
         account_filters: Vec<AccountFilter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let sender = self.control_tx.lock().await
+        self.inner.update_subscription(transaction_filters, account_filters).await
+    }
+
+    pub async fn stop(&self) {
+        self.inner.stop().await;
+    }
+}
+
+impl StreamClient {
+    fn new(endpoint: String, token: Option<String>, config: ClientConfig) -> Self {
+        crate::warmup::warmup_parser();
+        Self {
+            endpoint,
+            token,
+            config,
+            yellowstone_control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
+        }
+    }
+
+    /// 订阅 DEX 事件（自动重连）
+    async fn subscribe_dex_events(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+        event_type_filter: Option<EventTypeFilter>,
+    ) -> Result<Arc<ArrayQueue<DexEvent>>, Box<dyn std::error::Error>> {
+        let queue = Arc::new(ArrayQueue::new(100_000));
+        let queue_clone = Arc::clone(&queue);
+        let self_clone = self.clone();
+
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters;
+            stored.account_filters = account_filters;
+        }
+
+        tokio::spawn(async move {
+            loop {
+                match self_clone.stream_events(&event_type_filter, &queue_clone).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let delay_ms = stream_retry_delay_ms(&e);
+                        println!(
+                            "❌ gRPC error [endpoint={}]: {} - retry in {}ms",
+                            self_clone.endpoint, e, delay_ms
+                        );
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        Ok(queue)
+    }
+
+    /// 动态更新订阅过滤器
+    async fn update_subscription(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters.clone();
+            stored.account_filters = account_filters.clone();
+        }
+
+        let request =
+            build_subscribe_request(&transaction_filters, &account_filters, self.config.commitment);
+        let sender = self
+            .yellowstone_control_tx
+            .lock()
+            .await
             .as_ref()
             .ok_or("No active subscription")?
             .clone();
-        
-        let request = build_subscribe_request(&transaction_filters, &account_filters);
         sender.send(request).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    pub async fn stop(&self) {
+    async fn stop(&self) {
         println!("🛑 Stopping gRPC subscription...");
     }
 
@@ -108,40 +183,85 @@ impl YellowstoneGrpc {
 
     async fn stream_events(
         &self,
-        tx_filters: &[TransactionFilter],
-        acc_filters: &[AccountFilter],
+        event_filter: &Option<EventTypeFilter>,
+        queue: &Arc<ArrayQueue<DexEvent>>,
+    ) -> Result<(), String> {
+        self.stream_events_yellowstone(event_filter, queue).await
+    }
+
+    async fn stream_events_yellowstone(
+        &self,
         event_filter: &Option<EventTypeFilter>,
         queue: &Arc<ArrayQueue<DexEvent>>,
     ) -> Result<(), String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        
+
+        let (tx_filters, acc_filters) = {
+            let stored = self.last_filters.lock().await;
+            (stored.transaction_filters.clone(), stored.account_filters.clone())
+        };
+        let connect_endpoint = self.endpoint_for_backend();
+
+        info!(
+            "gRPC config: endpoint={} tls={} conn_timeout={}ms request_timeout={}ms keepalive_interval={}ms keepalive_timeout={}ms buffer_size={} order_mode={:?} order_timeout_ms={} micro_batch_us={}",
+            connect_endpoint,
+            self.config.enable_tls,
+            self.config.connection_timeout_ms,
+            self.config.request_timeout_ms,
+            self.config.keep_alive_interval_ms,
+            self.config.keep_alive_timeout_ms,
+            self.config.buffer_size,
+            self.config.order_mode,
+            self.config.order_timeout_ms,
+            self.config.micro_batch_us
+        );
+
         // 构建客户端
-        let mut builder = GeyserGrpcClient::build_from_shared(self.endpoint.clone())
+        let mut builder = GeyserGrpcClient::build_from_shared(connect_endpoint.clone())
             .map_err(|e| e.to_string())?
             .x_token(self.token.clone())
             .map_err(|e| e.to_string())?
             .max_decoding_message_size(1024 * 1024 * 1024);
 
         if self.config.connection_timeout_ms > 0 {
-            builder = builder.connect_timeout(Duration::from_millis(self.config.connection_timeout_ms));
+            builder =
+                builder.connect_timeout(Duration::from_millis(self.config.connection_timeout_ms));
+        }
+        if self.config.request_timeout_ms > 0 {
+            builder = builder.timeout(Duration::from_millis(self.config.request_timeout_ms));
         }
         if self.config.enable_tls {
-            builder = builder.tls_config(ClientTlsConfig::new().with_native_roots()).map_err(|e| e.to_string())?;
+            builder = builder
+                .tls_config(ClientTlsConfig::new().with_native_roots())
+                .map_err(|e| e.to_string())?;
         }
+        if self.config.buffer_size > 0 {
+            builder = builder.buffer_size(Some(self.config.buffer_size));
+        }
+        if self.config.keep_alive_interval_ms > 0 {
+            let interval = Duration::from_millis(self.config.keep_alive_interval_ms);
+            builder = builder
+                .http2_keep_alive_interval(interval)
+                .keep_alive_while_idle(true)
+                .tcp_keepalive(Some(interval));
+        }
+        if self.config.keep_alive_timeout_ms > 0 {
+            builder = builder
+                .keep_alive_timeout(Duration::from_millis(self.config.keep_alive_timeout_ms));
+        }
+        builder = builder.tcp_nodelay(true).http2_adaptive_window(true);
 
         let mut client = builder.connect().await.map_err(|e| e.to_string())?;
-        let request = build_subscribe_request(tx_filters, acc_filters);
-        
-        let (subscribe_tx, mut stream) = client
-            .subscribe_with_request(Some(request))
-            .await
-            .map_err(|e| e.to_string())?;
+        let request = build_subscribe_request(&tx_filters, &acc_filters, self.config.commitment);
+
+        let (subscribe_tx, mut stream) =
+            client.subscribe_with_request(Some(request)).await.map_err(|e| e.to_string())?;
 
         self.print_mode_info();
 
         // 设置控制通道
         let (control_tx, mut control_rx) = mpsc::channel::<SubscribeRequest>(100);
-        *self.control_tx.lock().await = Some(control_tx);
+        *self.yellowstone_control_tx.lock().await = Some(control_tx);
         let subscribe_tx = Arc::new(Mutex::new(subscribe_tx));
 
         // 初始化缓冲区
@@ -154,18 +274,33 @@ impl YellowstoneGrpc {
         let batch_us = self.config.micro_batch_us;
         let check_interval = Duration::from_millis(timeout_ms / 2);
         let mut next_check = Instant::now() + check_interval;
+        let mut ping_id: i32 = 0;
 
         loop {
             // Periodic timeout check for ordered modes and MicroBatch
             self.check_timeout(
-                order_mode, &mut slot_buffer, &mut micro_batch, queue,
-                timeout_ms, batch_us, &mut next_check, check_interval
+                order_mode,
+                &mut slot_buffer,
+                &mut micro_batch,
+                queue,
+                timeout_ms,
+                batch_us,
+                &mut next_check,
+                check_interval,
             );
 
             tokio::select! {
                 msg = stream.next() => {
                     match msg {
                         Some(Ok(update)) => {
+                            if let Some(subscribe_update::UpdateOneof::Ping(_)) = update.update_oneof.as_ref() {
+                                ping_id = ping_id.wrapping_add(1);
+                                let req = build_ping_request(ping_id);
+                                if let Err(e) = subscribe_tx.lock().await.send(req).await {
+                                    return Err(e.to_string());
+                                }
+                                continue;
+                            }
                             self.handle_update(
                                 update, order_mode, event_filter, queue,
                                 &mut slot_buffer, &mut micro_batch, &mut last_slot, batch_us
@@ -194,10 +329,20 @@ impl YellowstoneGrpc {
     fn print_mode_info(&self) {
         match self.config.order_mode {
             OrderMode::Unordered => println!("✅ Unordered Mode (10-20μs)"),
-            OrderMode::Ordered => println!("✅ Ordered Mode (timeout={}ms)", self.config.order_timeout_ms),
-            OrderMode::StreamingOrdered => println!("✅ StreamingOrdered Mode (timeout={}ms)", self.config.order_timeout_ms),
-            OrderMode::MicroBatch => println!("✅ MicroBatch Mode (window={}μs)", self.config.micro_batch_us),
+            OrderMode::Ordered => {
+                println!("✅ Ordered Mode (timeout={}ms)", self.config.order_timeout_ms)
+            }
+            OrderMode::StreamingOrdered => {
+                println!("✅ StreamingOrdered Mode (timeout={}ms)", self.config.order_timeout_ms)
+            }
+            OrderMode::MicroBatch => {
+                println!("✅ MicroBatch Mode (window={}μs)", self.config.micro_batch_us)
+            }
         }
+    }
+
+    fn endpoint_for_backend(&self) -> String {
+        normalize_endpoint(&self.endpoint, self.config.enable_tls)
     }
 
     #[inline]
@@ -216,36 +361,49 @@ impl YellowstoneGrpc {
             return;
         }
         *next_check = Instant::now() + interval;
-        
+
         match mode {
             OrderMode::Ordered => {
                 if slot_buf.should_timeout(timeout_ms) {
-                    for e in slot_buf.flush_all() { let _ = queue.push(e); }
+                    for e in slot_buf.flush_all() {
+                        let _ = queue.push(e);
+                    }
                 }
             }
             OrderMode::StreamingOrdered => {
                 if slot_buf.should_timeout(timeout_ms) {
-                    for e in slot_buf.flush_streaming_timeout() { let _ = queue.push(e); }
+                    for e in slot_buf.flush_streaming_timeout() {
+                        let _ = queue.push(e);
+                    }
                 }
             }
             OrderMode::MicroBatch => {
                 // Periodic flush for MicroBatch mode
                 let now_us = get_timestamp_us();
                 if micro_buf.should_flush(now_us, batch_us) {
-                    for e in micro_buf.flush() { let _ = queue.push(e); }
+                    for e in micro_buf.flush() {
+                        let _ = queue.push(e);
+                    }
                 }
             }
             OrderMode::Unordered => {}
         }
     }
 
-    fn flush_on_disconnect(&self, mode: OrderMode, buffer: &mut SlotBuffer, queue: &Arc<ArrayQueue<DexEvent>>) {
+    fn flush_on_disconnect(
+        &self,
+        mode: OrderMode,
+        buffer: &mut SlotBuffer,
+        queue: &Arc<ArrayQueue<DexEvent>>,
+    ) {
         if matches!(mode, OrderMode::Ordered | OrderMode::StreamingOrdered) {
             let events = match mode {
                 OrderMode::StreamingOrdered => buffer.flush_streaming_timeout(),
                 _ => buffer.flush_all(),
             };
-            for e in events { let _ = queue.push(e); }
+            for e in events {
+                let _ = queue.push(e);
+            }
         }
     }
 
@@ -261,14 +419,26 @@ impl YellowstoneGrpc {
         last_slot: &mut u64,
         batch_us: u64,
     ) {
-        let block_time_us = timestamp_to_microseconds(&update_msg.created_at.unwrap_or_default()) as i64;
+        let block_time_us =
+            timestamp_to_microseconds(&update_msg.created_at.unwrap_or_default()) as i64;
         let grpc_recv_us = get_timestamp_us();
 
         let Some(update) = update_msg.update_oneof else { return };
 
         match update {
             subscribe_update::UpdateOneof::Transaction(tx) => {
-                self.handle_transaction(tx, mode, filter, queue, slot_buf, micro_buf, last_slot, batch_us, grpc_recv_us, block_time_us);
+                self.handle_transaction(
+                    tx,
+                    mode,
+                    filter,
+                    queue,
+                    slot_buf,
+                    micro_buf,
+                    last_slot,
+                    batch_us,
+                    grpc_recv_us,
+                    block_time_us,
+                );
             }
             subscribe_update::UpdateOneof::Account(acc) => {
                 Self::handle_account(acc, filter, queue, grpc_recv_us, block_time_us);
@@ -292,7 +462,24 @@ impl YellowstoneGrpc {
         block_us: i64,
     ) {
         let slot = tx.slot;
-        
+
+        if let Some(deduper) = &self.tx_deduper {
+            let Some(info) = tx.transaction.as_ref() else { return };
+            let sig = extract_signature(&info.signature);
+            let log_enabled = log::log_enabled!(log::Level::Info);
+            let log_label = deduper.log_label();
+            let start_us = if log_enabled && log_label.is_some() { now_micros() } else { 0 };
+            if !deduper.check(sig, slot, grpc_us) {
+                return;
+            }
+            if let Some(label) = log_label {
+                if log_enabled {
+                    let dedup_us = now_micros().saturating_sub(start_us);
+                    info!("{label}: {}: {sig}: {slot}: dedup_us={dedup_us}", self.endpoint);
+                }
+            }
+        }
+
         match mode {
             OrderMode::Unordered => {
                 for e in parse_transaction_core(&tx, grpc_us, Some(block_us), filter.as_ref()) {
@@ -301,24 +488,34 @@ impl YellowstoneGrpc {
             }
             OrderMode::Ordered => {
                 if slot > *last_slot && *last_slot > 0 {
-                    for e in slot_buf.flush_before(slot) { let _ = queue.push(e); }
+                    for e in slot_buf.flush_before(slot) {
+                        let _ = queue.push(e);
+                    }
                 }
                 *last_slot = slot;
-                for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
+                for (idx, e) in
+                    parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref())
+                {
                     slot_buf.push(slot, idx, e);
                 }
             }
             OrderMode::StreamingOrdered => {
-                for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
+                for (idx, e) in
+                    parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref())
+                {
                     for evt in slot_buf.push_streaming(slot, idx, e) {
                         let _ = queue.push(evt);
                     }
                 }
             }
             OrderMode::MicroBatch => {
-                for (idx, e) in parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref()) {
+                for (idx, e) in
+                    parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref())
+                {
                     if micro_buf.push(slot, idx, e, grpc_us, batch_us) {
-                        for evt in micro_buf.flush() { let _ = queue.push(evt); }
+                        for evt in micro_buf.flush() {
+                            let _ = queue.push(evt);
+                        }
                     }
                 }
             }
@@ -371,26 +568,80 @@ fn get_timestamp_us() -> i64 {
     now_micros()
 }
 
-fn build_subscribe_request(tx_filters: &[TransactionFilter], acc_filters: &[AccountFilter]) -> SubscribeRequest {
-    let transactions = tx_filters.iter().enumerate().map(|(i, f)| {
-        (format!("tx_{}", i), SubscribeRequestFilterTransactions {
-            vote: Some(false),
-            failed: Some(false),
-            signature: None,
-            account_include: f.account_include.clone(),
-            account_exclude: f.account_exclude.clone(),
-            account_required: f.account_required.clone(),
-        })
-    }).collect();
+fn is_unimplemented_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("unimplemented")
+        || lower.contains("operation is not implemented or not supported")
+        || lower.contains("method not found")
+}
 
-    let accounts = acc_filters.iter().enumerate().map(|(i, f)| {
-        (format!("acc_{}", i), SubscribeRequestFilterAccounts {
-            account: f.account.clone(),
-            owner: f.owner.clone(),
-            filters: f.filters.clone(),
-            nonempty_txn_signature: None,
+fn stream_retry_delay_ms(err: &str) -> u64 {
+    let lower = err.to_ascii_lowercase();
+    if is_unimplemented_error(&lower) {
+        5_000
+    } else if lower.contains("unauthorized")
+        || lower.contains("permission denied")
+        || lower.contains("authentication")
+    {
+        3_000
+    } else if lower.contains("rate limit")
+        || lower.contains("resource has been exhausted")
+        || lower.contains("quota")
+    {
+        2_000
+    } else {
+        1_000
+    }
+}
+
+fn normalize_endpoint(endpoint: &str, enable_tls: bool) -> String {
+    let endpoint = endpoint.trim();
+    if endpoint.starts_with("https://") || endpoint.starts_with("http://") {
+        endpoint.to_string()
+    } else {
+        let scheme = if enable_tls { "https" } else { "http" };
+        format!("{scheme}://{endpoint}")
+    }
+}
+
+fn build_subscribe_request(
+    tx_filters: &[TransactionFilter],
+    acc_filters: &[AccountFilter],
+    commitment_mode: CommitmentMode,
+) -> SubscribeRequest {
+    let transactions = tx_filters
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            (
+                format!("tx_{}", i),
+                SubscribeRequestFilterTransactions {
+                    vote: Some(false),
+                    failed: Some(false),
+                    signature: None,
+                    account_include: f.account_include.clone(),
+                    account_exclude: f.account_exclude.clone(),
+                    account_required: f.account_required.clone(),
+                },
+            )
         })
-    }).collect();
+        .collect();
+
+    let accounts = acc_filters
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            (
+                format!("acc_{}", i),
+                SubscribeRequestFilterAccounts {
+                    account: f.account.clone(),
+                    owner: f.owner.clone(),
+                    filters: f.filters.clone(),
+                    nonempty_txn_signature: None,
+                },
+            )
+        })
+        .collect();
 
     SubscribeRequest {
         slots: HashMap::new(),
@@ -400,9 +651,33 @@ fn build_subscribe_request(tx_filters: &[TransactionFilter], acc_filters: &[Acco
         blocks: HashMap::new(),
         blocks_meta: HashMap::new(),
         entry: HashMap::new(),
-        commitment: Some(CommitmentLevel::Processed as i32),
+        commitment: Some(commitment_level_from_mode(commitment_mode) as i32),
         accounts_data_slice: Vec::new(),
         ping: None,
+        from_slot: None,
+    }
+}
+
+fn commitment_level_from_mode(mode: CommitmentMode) -> CommitmentLevel {
+    match mode {
+        CommitmentMode::Processed => CommitmentLevel::Processed,
+        CommitmentMode::Confirmed => CommitmentLevel::Confirmed,
+        CommitmentMode::Finalized => CommitmentLevel::Finalized,
+    }
+}
+
+fn build_ping_request(id: i32) -> SubscribeRequest {
+    SubscribeRequest {
+        slots: HashMap::new(),
+        accounts: HashMap::new(),
+        transactions: HashMap::new(),
+        transactions_status: HashMap::new(),
+        blocks: HashMap::new(),
+        blocks_meta: HashMap::new(),
+        entry: HashMap::new(),
+        commitment: None,
+        accounts_data_slice: Vec::new(),
+        ping: Some(SubscribeRequestPing { id }),
         from_slot: None,
     }
 }
@@ -417,10 +692,7 @@ fn parse_transaction_to_vec(
     filter: Option<&EventTypeFilter>,
 ) -> Vec<(u64, DexEvent)> {
     let idx = tx.transaction.as_ref().map(|t| t.index).unwrap_or(0);
-    parse_transaction_core(tx, grpc_us, block_us, filter)
-        .into_iter()
-        .map(|e| (idx, e))
-        .collect()
+    parse_transaction_core(tx, grpc_us, block_us, filter).into_iter().map(|e| (idx, e)).collect()
 }
 
 #[inline]
@@ -437,9 +709,20 @@ fn parse_transaction_core(
     let slot = tx.slot;
     let idx = info.index;
 
-    // 并行解析 logs 和 instructions
     let (log_events, instr_events) = rayon::join(
-        || parse_logs(meta, &info.transaction, &meta.log_messages, sig, slot, idx, block_us, grpc_us, filter),
+        || {
+            parse_logs(
+                meta,
+                &info.transaction,
+                &meta.log_messages,
+                sig,
+                slot,
+                idx,
+                block_us,
+                grpc_us,
+                filter,
+            )
+        },
         || parse_instructions(meta, &info.transaction, sig, slot, idx, block_us, grpc_us, filter),
     );
 
@@ -452,7 +735,11 @@ fn parse_transaction_core(
 #[inline(always)]
 fn extract_signature(bytes: &[u8]) -> solana_sdk::signature::Signature {
     let mut arr = [0u8; 64];
-    arr.copy_from_slice(bytes);
+    if bytes.len() >= 64 {
+        arr.copy_from_slice(&bytes[..64]);
+    } else {
+        arr[..bytes.len()].copy_from_slice(bytes);
+    }
     solana_sdk::signature::Signature::from(arr)
 }
 
@@ -468,16 +755,13 @@ fn parse_logs(
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
 ) -> Vec<DexEvent> {
-    let recent_blockhash = transaction
-        .as_ref()
-        .and_then(|t| t.message.as_ref())
-        .and_then(|m| {
-            if m.recent_blockhash.is_empty() {
-                None
-            } else {
-                Some(m.recent_blockhash.clone())
-            }
-        });
+    let recent_blockhash = transaction.as_ref().and_then(|t| t.message.as_ref()).and_then(|m| {
+        if m.recent_blockhash.is_empty() {
+            None
+        } else {
+            Some(m.recent_blockhash.clone())
+        }
+    });
 
     let needs_pumpfun = filter.map(|f| f.includes_pumpfun()).unwrap_or(true);
     let has_create = needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(logs);
@@ -489,14 +773,36 @@ fn parse_logs(
 
     for log in logs {
         if let Some((pid, depth)) = crate::logs::optimized_matcher::parse_invoke_info(log) {
-            if depth == 1 { inner_idx = -1; outer_idx += 1; } else { inner_idx += 1; }
+            if depth == 1 {
+                inner_idx = -1;
+                outer_idx += 1;
+            } else {
+                inner_idx += 1;
+            }
             invokes.entry(pid).or_default().push((outer_idx, inner_idx));
         }
 
-        if PROGRAM_DATA_FINDER.find(log.as_bytes()).is_none() { continue; }
+        if PROGRAM_DATA_FINDER.find(log.as_bytes()).is_none() {
+            continue;
+        }
 
-        if let Some(mut e) = crate::logs::parse_log(log, sig, slot, tx_idx, block_us, grpc_us, filter, has_create, recent_blockhash.as_deref()) {
-            crate::core::account_dispatcher::fill_accounts_from_transaction_data(&mut e, meta, transaction, &invokes);
+        if let Some(mut e) = crate::logs::parse_log(
+            log,
+            sig,
+            slot,
+            tx_idx,
+            block_us,
+            grpc_us,
+            filter,
+            has_create,
+            recent_blockhash.as_deref(),
+        ) {
+            crate::core::account_dispatcher::fill_accounts_from_transaction_data(
+                &mut e,
+                meta,
+                transaction,
+                &invokes,
+            );
             crate::core::common_filler::fill_data(&mut e, meta, transaction, &invokes);
             result.push(e);
         }

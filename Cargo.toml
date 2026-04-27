@@ -97,6 +97,7 @@ smallvec = "1.13"  # 零延迟优化：栈分配小数组
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"          # Thin LTO: 快速编译 + 良好优化（2-3分钟 vs 6分钟）

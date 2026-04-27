@@ -2,9 +2,9 @@
 //!
 //! 解析 Meteora Pools 程序的日志事件
 
-use solana_sdk::signature::Signature;
-use crate::core::events::*;
 use super::utils::*;
+use crate::core::events::*;
+use solana_sdk::signature::Signature;
 
 /// Meteora Pools 事件 discriminator 常量
 pub mod discriminators {
@@ -17,7 +17,14 @@ pub mod discriminators {
 }
 
 /// 主要的 Meteora Pools 日志解析函数
-pub fn parse_log(log: &str, signature: Signature, slot: u64, tx_index: u64, block_time_us: Option<i64>, grpc_recv_us: i64) -> Option<DexEvent> {
+pub fn parse_log(
+    log: &str,
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
     parse_structured_log(log, signature, slot, tx_index, block_time_us, grpc_recv_us)
 }
 
@@ -42,22 +49,32 @@ fn parse_structured_log(
     match discriminator {
         discriminators::SWAP_EVENT => {
             parse_swap_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::ADD_LIQUIDITY_EVENT => {
             parse_add_liquidity_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::REMOVE_LIQUIDITY_EVENT => {
-            parse_remove_liquidity_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
-        discriminators::BOOTSTRAP_LIQUIDITY_EVENT => {
-            parse_bootstrap_liquidity_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
+        discriminators::REMOVE_LIQUIDITY_EVENT => parse_remove_liquidity_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
+        discriminators::BOOTSTRAP_LIQUIDITY_EVENT => parse_bootstrap_liquidity_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         discriminators::POOL_CREATED_EVENT => {
             parse_pool_created_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         discriminators::SET_POOL_FEES_EVENT => {
             parse_set_pool_fees_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
-        },
+        }
         _ => None,
     }
 }
@@ -139,7 +156,10 @@ pub fn parse_remove_liquidity_from_data(data: &[u8], metadata: EventMetadata) ->
 
 /// Parse Meteora AMM BootstrapLiquidity event from pre-decoded data
 #[inline(always)]
-pub fn parse_bootstrap_liquidity_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+pub fn parse_bootstrap_liquidity_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
     let mut offset = 0;
 
     let lp_mint_amount = read_u64_le(data, offset)?;
@@ -309,7 +329,8 @@ fn parse_bootstrap_liquidity_event(
 
     let pool = read_pubkey(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraPoolsBootstrapLiquidity(MeteoraPoolsBootstrapLiquidityEvent {
         metadata,
@@ -345,7 +366,8 @@ fn parse_pool_created_event(
 
     let pool = read_pubkey(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraPoolsPoolCreated(MeteoraPoolsPoolCreatedEvent {
         metadata,
@@ -382,7 +404,8 @@ fn parse_set_pool_fees_event(
 
     let pool = read_pubkey(data, offset)?;
 
-    let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
 
     Some(DexEvent::MeteoraPoolsSetPoolFees(MeteoraPoolsSetPoolFeesEvent {
         metadata,

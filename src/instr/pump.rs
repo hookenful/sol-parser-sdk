@@ -21,6 +21,8 @@ pub mod discriminators {
     pub const BUY_EXACT_SOL_IN: [u8; 8] = [56, 252, 116, 8, 158, 223, 205, 95];
     /// Migrate event log discriminator (CPI)
     pub const MIGRATE_EVENT_LOG: [u8; 8] = [189, 233, 93, 185, 92, 148, 234, 148];
+    /// Migrate instruction discriminator (global:migrate)
+    pub const MIGRATE: [u8; 8] = [155, 234, 231, 146, 236, 158, 162, 30];
 }
 
 /// PumpFun Program ID
@@ -29,7 +31,8 @@ pub const PROGRAM_ID_PUBKEY: Pubkey = program_ids::PUMPFUN_PROGRAM_ID;
 /// Main PumpFun instruction parser
 ///
 /// Outer instructions (8-byte discriminator): CREATE, CREATE_V2 从指令解析并返回事件；
-/// BUY/SELL 仍以 log 为主。Inner CPI: MIGRATE_EVENT_LOG 仅在此解析。
+/// BUY/SELL 通常以 log 为主；Logless 模式可从指令补 trade 事件。
+/// Inner CPI: MIGRATE_EVENT_LOG 在此解析。
 pub fn parse_instruction(
     instruction_data: &[u8],
     accounts: &[Pubkey],
@@ -39,26 +42,39 @@ pub fn parse_instruction(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
+    parse_instruction_with_mode(
+        instruction_data,
+        accounts,
+        signature,
+        slot,
+        tx_index,
+        block_time_us,
+        grpc_recv_us,
+        false,
+    )
+}
+
+pub fn parse_instruction_with_mode(
+    instruction_data: &[u8],
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+    include_trade_events: bool,
+) -> Option<DexEvent> {
     if instruction_data.len() < 8 {
         return None;
     }
-    let outer_disc: [u8; 8] = instruction_data[0..8].try_into().ok()?;
-    let data = &instruction_data[8..];
 
-    // 外层指令：Create / CreateV2（与 solana-streamer 功能对齐）
-    if outer_disc == discriminators::CREATE_V2 {
-        return parse_create_v2_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us);
-    }
-    if outer_disc == discriminators::CREATE {
-        return parse_create_instruction(data, accounts, signature, slot, tx_index, block_time_us, grpc_recv_us);
-    }
+    let discriminator: [u8; 8] = instruction_data[0..8].try_into().ok()?;
+    let args = &instruction_data[8..];
 
-    // Inner CPI：仅 MIGRATE 在此解析
-    if instruction_data.len() >= 16 {
-        let cpi_disc: [u8; 8] = instruction_data[8..16].try_into().ok()?;
-        if cpi_disc == discriminators::MIGRATE_EVENT_LOG {
-            return parse_migrate_log_instruction(
-                &instruction_data[16..],
+    match discriminator {
+        discriminators::CREATE => {
+            return parse_create_instruction(
+                args,
                 accounts,
                 signature,
                 slot,
@@ -67,6 +83,86 @@ pub fn parse_instruction(
                 grpc_recv_us,
             );
         }
+        discriminators::CREATE_V2 => {
+            return parse_create_v2_instruction(
+                args,
+                accounts,
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                grpc_recv_us,
+            );
+        }
+        _ => {}
+    }
+
+    if include_trade_events {
+        match discriminator {
+            discriminators::BUY => {
+                return parse_buy_instruction(
+                    args,
+                    accounts,
+                    signature,
+                    slot,
+                    tx_index,
+                    block_time_us,
+                    grpc_recv_us,
+                    false,
+                );
+            }
+            discriminators::BUY_EXACT_SOL_IN => {
+                return parse_buy_instruction(
+                    args,
+                    accounts,
+                    signature,
+                    slot,
+                    tx_index,
+                    block_time_us,
+                    grpc_recv_us,
+                    true,
+                );
+            }
+            discriminators::SELL => {
+                return parse_sell_instruction(
+                    args,
+                    accounts,
+                    signature,
+                    slot,
+                    tx_index,
+                    block_time_us,
+                    grpc_recv_us,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if discriminator == discriminators::MIGRATE {
+        return parse_migrate_instruction(
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
+    }
+
+    if instruction_data.len() < 16 {
+        return None;
+    }
+    let cpi_discriminator: [u8; 8] = instruction_data[8..16].try_into().ok()?;
+    if cpi_discriminator == discriminators::MIGRATE_EVENT_LOG {
+        return parse_migrate_log_instruction(
+            &instruction_data[16..],
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
     }
     None
 }
@@ -89,6 +185,7 @@ fn parse_buy_instruction(
     tx_index: u64,
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
+    is_exact_sol_in: bool,
 ) -> Option<DexEvent> {
     if accounts.len() < 7 {
         return None;
@@ -102,22 +199,33 @@ fn parse_buy_instruction(
     };
 
     let mint = get_account(accounts, 2)?;
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), grpc_recv_us
-    );
+    let metadata =
+        create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), grpc_recv_us);
+    let ix_name = if is_exact_sol_in { "buy_exact_sol_in" } else { "buy" };
+    let timestamp = block_time_us.unwrap_or_default().saturating_div(1_000_000);
 
-    Some(DexEvent::PumpFunTrade(PumpFunTradeEvent {
+    let trade = PumpFunTradeEvent {
         metadata,
         mint,
         is_buy: true,
         bonding_curve: get_account(accounts, 3).unwrap_or_default(),
+        associated_bonding_curve: get_account(accounts, 4).unwrap_or_default(),
         user: get_account(accounts, 6).unwrap_or_default(),
         sol_amount,
         token_amount,
         fee_recipient: get_account(accounts, 1).unwrap_or_default(),
+        creator_vault: get_account(accounts, 9).unwrap_or_default(),
+        token_program: get_account(accounts, 8).unwrap_or_default(),
+        timestamp,
+        ix_name: ix_name.to_string(),
         ..Default::default()
-    }))
+    };
+
+    if is_exact_sol_in {
+        Some(DexEvent::PumpFunBuyExactSolIn(trade))
+    } else {
+        Some(DexEvent::PumpFunBuy(trade))
+    }
 }
 
 /// Parse sell instruction
@@ -150,20 +258,24 @@ fn parse_sell_instruction(
     };
 
     let mint = get_account(accounts, 2)?;
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), grpc_recv_us
-    );
+    let metadata =
+        create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), grpc_recv_us);
+    let timestamp = block_time_us.unwrap_or_default().saturating_div(1_000_000);
 
-    Some(DexEvent::PumpFunTrade(PumpFunTradeEvent {
+    Some(DexEvent::PumpFunSell(PumpFunTradeEvent {
         metadata,
         mint,
         is_buy: false,
         bonding_curve: get_account(accounts, 3).unwrap_or_default(),
+        associated_bonding_curve: get_account(accounts, 4).unwrap_or_default(),
         user: get_account(accounts, 6).unwrap_or_default(),
         sol_amount,
         token_amount,
         fee_recipient: get_account(accounts, 1).unwrap_or_default(),
+        creator_vault: get_account(accounts, 8).unwrap_or_default(),
+        token_program: get_account(accounts, 9).unwrap_or_default(),
+        timestamp,
+        ix_name: "sell".to_string(),
         ..Default::default()
     }))
 }
@@ -218,10 +330,8 @@ fn parse_create_instruction(
     };
 
     let mint = get_account(accounts, 0)?;
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), grpc_recv_us
-    );
+    let metadata =
+        create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), grpc_recv_us);
 
     Some(DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
         metadata,
@@ -232,6 +342,8 @@ fn parse_create_instruction(
         bonding_curve: get_account(accounts, 2).unwrap_or_default(),
         user: get_account(accounts, 7).unwrap_or_default(),
         creator,
+        token_program: get_account(accounts, 9).unwrap_or_default(),
+        timestamp: block_time_us.unwrap_or_default().saturating_div(1_000_000),
         ..Default::default()
     }))
 }
@@ -284,10 +396,8 @@ fn parse_create_v2_instruction(
     };
 
     let mint = acc[0];
-    let metadata = create_metadata(
-        signature, slot, tx_index,
-        block_time_us.unwrap_or_default(), grpc_recv_us,
-    );
+    let metadata =
+        create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), grpc_recv_us);
 
     Some(DexEvent::PumpFunCreateV2(PumpFunCreateV2TokenEvent {
         metadata,
@@ -373,4 +483,103 @@ fn parse_migrate_log_instruction(
         timestamp,
         pool,
     }))
+}
+
+/// Parse migrate instruction (global:migrate)
+fn parse_migrate_instruction(
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    // Need at least up to pool account per IDL.
+    if accounts.len() < 10 {
+        return None;
+    }
+
+    let metadata =
+        create_metadata(signature, slot, tx_index, block_time_us.unwrap_or_default(), grpc_recv_us);
+    let timestamp = block_time_us.unwrap_or_default().saturating_div(1_000_000);
+
+    Some(DexEvent::PumpFunMigrate(PumpFunMigrateEvent {
+        metadata,
+        user: get_account(accounts, 5).unwrap_or_default(),
+        mint: get_account(accounts, 2).unwrap_or_default(),
+        mint_amount: 0,
+        sol_amount: 0,
+        pool_migration_fee: 0,
+        bonding_curve: get_account(accounts, 3).unwrap_or_default(),
+        timestamp,
+        pool: get_account(accounts, 9).unwrap_or_default(),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode_borsh_str(s: &str, out: &mut Vec<u8>) {
+        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+
+    #[test]
+    fn parse_create_v2_instruction() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&discriminators::CREATE_V2);
+        encode_borsh_str("MyToken", &mut data);
+        encode_borsh_str("MTK", &mut data);
+        encode_borsh_str("https://example.com/meta.json", &mut data);
+        data.extend_from_slice(&Pubkey::new_unique().to_bytes());
+        data.push(1); // is_mayhem_mode
+        data.push(0); // is_cashback_enabled.value (OptionBool struct with bool field)
+
+        let accounts: Vec<Pubkey> = (0..16).map(|_| Pubkey::new_unique()).collect();
+        let event = parse_instruction_with_mode(
+            &data,
+            &accounts,
+            Signature::new_unique(),
+            1,
+            0,
+            Some(1_700_000_000_000_000),
+            1_700_000_000_000_123,
+            true,
+        );
+
+        match event {
+            Some(DexEvent::PumpFunCreateV2(e)) => {
+                assert_eq!(e.name, "MyToken");
+                assert_eq!(e.symbol, "MTK");
+                assert_eq!(e.uri, "https://example.com/meta.json");
+                assert_eq!(e.mint, accounts[0]);
+                assert_eq!(e.user, accounts[5]);
+                assert_eq!(e.token_program, accounts[7]);
+                assert_eq!(e.program, accounts[15]);
+            }
+            _ => panic!("expected PumpFunCreateV2"),
+        }
+    }
+
+    #[test]
+    fn unknown_discriminator_is_ignored() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[9, 9, 9, 9, 9, 9, 9, 9]);
+        data.extend_from_slice(&42u64.to_le_bytes());
+        data.extend_from_slice(&7u64.to_le_bytes());
+        let accounts: Vec<Pubkey> = (0..10).map(|_| Pubkey::new_unique()).collect();
+
+        let event = parse_instruction_with_mode(
+            &data,
+            &accounts,
+            Signature::new_unique(),
+            1,
+            0,
+            None,
+            0,
+            true,
+        );
+        assert!(event.is_none());
+    }
 }

@@ -29,7 +29,6 @@
 use crate::core::events::*;
 use crate::instr::inner_common::*;
 
-
 /// PumpSwap inner instruction discriminators (16 bytes)
 /// Format: [event_magic (8 bytes) | event_discriminator (8 bytes)]
 /// The magic prefix is: [228, 69, 165, 46, 81, 203, 154, 29]
@@ -42,36 +41,36 @@ pub mod discriminators {
     /// BuyEvent
     /// Full discriminator: MAGIC_PREFIX + [103, 244, 82, 31, 44, 245, 119, 119]
     pub const BUY: [u8; 16] = [
-        228, 69, 165, 46, 81, 203, 154, 29,  // magic prefix
+        228, 69, 165, 46, 81, 203, 154, 29, // magic prefix
         103, 244, 82, 31, 44, 245, 119, 119, // BuyEvent hash
     ];
 
     /// SellEvent
     /// Full discriminator: MAGIC_PREFIX + [62, 47, 55, 10, 165, 3, 220, 42]
     pub const SELL: [u8; 16] = [
-        228, 69, 165, 46, 81, 203, 154, 29,  // magic prefix
-        62, 47, 55, 10, 165, 3, 220, 42,     // SellEvent hash
+        228, 69, 165, 46, 81, 203, 154, 29, // magic prefix
+        62, 47, 55, 10, 165, 3, 220, 42, // SellEvent hash
     ];
 
     /// CreatePoolEvent
     /// Full discriminator: MAGIC_PREFIX + [177, 49, 12, 210, 160, 118, 167, 116]
     pub const CREATE_POOL: [u8; 16] = [
-        228, 69, 165, 46, 81, 203, 154, 29,  // magic prefix
+        228, 69, 165, 46, 81, 203, 154, 29, // magic prefix
         177, 49, 12, 210, 160, 118, 167, 116, // CreatePoolEvent hash
     ];
 
     /// DepositEvent (Add Liquidity)
     /// Full discriminator: MAGIC_PREFIX + [120, 248, 61, 83, 31, 142, 107, 144]
     pub const ADD_LIQUIDITY: [u8; 16] = [
-        228, 69, 165, 46, 81, 203, 154, 29,  // magic prefix
+        228, 69, 165, 46, 81, 203, 154, 29, // magic prefix
         120, 248, 61, 83, 31, 142, 107, 144, // AddLiquidityEvent hash
     ];
 
     /// WithdrawEvent (Remove Liquidity)
     /// Full discriminator: MAGIC_PREFIX + [22, 9, 133, 26, 160, 44, 71, 192]
     pub const REMOVE_LIQUIDITY: [u8; 16] = [
-        228, 69, 165, 46, 81, 203, 154, 29,  // magic prefix
-        22, 9, 133, 26, 160, 44, 71, 192,    // RemoveLiquidityEvent hash
+        228, 69, 165, 46, 81, 203, 154, 29, // magic prefix
+        22, 9, 133, 26, 160, 44, 71, 192, // RemoveLiquidityEvent hash
     ];
 }
 
@@ -122,10 +121,7 @@ fn parse_buy_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEven
     let event = borsh::from_slice::<PumpSwapBuyEvent>(data).ok()?;
 
     // 设置 metadata
-    Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent {
-        metadata,
-        ..event
-    }))
+    Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent { metadata, ..event }))
 }
 
 /// 零拷贝解析器 - Buy 事件
@@ -260,11 +256,7 @@ fn parse_buy_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> Option<Dex
         } else {
             0
         };
-        let cashback = if offset + 8 <= data.len() {
-            read_u64_unchecked(data, offset)
-        } else {
-            0
-        };
+        let cashback = if offset + 8 <= data.len() { read_u64_unchecked(data, offset) } else { 0 };
 
         Some(DexEvent::PumpSwapBuy(PumpSwapBuyEvent {
             metadata,
@@ -344,7 +336,7 @@ fn parse_sell_inner_borsh(data: &[u8], metadata: EventMetadata) -> Option<DexEve
     // 设置 metadata 并设置 is_pump_pool 标志
     Some(DexEvent::PumpSwapSell(PumpSwapSellEvent {
         metadata,
-        is_pump_pool: true,  // 标记为 PumpSwap pool
+        is_pump_pool: true, // 标记为 PumpSwap pool
         ..event
     }))
 }

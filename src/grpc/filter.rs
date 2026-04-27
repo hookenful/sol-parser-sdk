@@ -1,10 +1,9 @@
 pub use crate::grpc::types::{
-    TransactionFilter, AccountFilter, AccountFilterData, AccountFilterMemcmp,
-    EventTypeFilter,
+    AccountFilter, AccountFilterData, AccountFilterMemcmp, EventTypeFilter, TransactionFilter,
 };
 
-use crate::grpc::types::Protocol;
 use crate::grpc::program_ids::get_program_ids_for_protocols;
+use crate::grpc::types::Protocol;
 
 impl TransactionFilter {
     pub fn for_protocols(protocols: &[Protocol]) -> Self {
@@ -20,10 +19,6 @@ impl TransactionFilter {
 impl AccountFilter {
     pub fn for_protocols(protocols: &[Protocol]) -> Self {
         let program_ids = get_program_ids_for_protocols(protocols);
-        Self {
-            account: Vec::new(),
-            owner: program_ids,
-            filters: Vec::new(),
-        }
+        Self { account: Vec::new(), owner: program_ids, filters: Vec::new() }
     }
 }

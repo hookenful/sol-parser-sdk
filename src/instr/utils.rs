@@ -1,7 +1,7 @@
 //! 指令解析通用工具函数
 
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use crate::core::events::EventMetadata;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use yellowstone_grpc_proto::prelude::{Transaction, TransactionStatusMeta};
 
 /// 创建事件元数据的通用函数
@@ -12,14 +12,7 @@ pub fn create_metadata(
     block_time_us: i64,
     grpc_recv_us: i64,
 ) -> EventMetadata {
-    EventMetadata {
-        signature,
-        slot,
-        tx_index,
-        block_time_us,
-        grpc_recv_us,
-        recent_blockhash: None,
-    }
+    EventMetadata { signature, slot, tx_index, block_time_us, grpc_recv_us, recent_blockhash: None }
 }
 
 /// 创建事件元数据的兼容性函数（用于指令解析）
@@ -46,22 +39,19 @@ pub fn create_metadata_simple(
 /// 从指令数据中读取 u64（小端序）- SIMD 优化
 #[inline(always)]
 pub fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
-    data.get(offset..offset + 8)
-        .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 8).map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从指令数据中读取 u32（小端序）- SIMD 优化
 #[inline(always)]
 pub fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4)
-        .map(|slice| u32::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 4).map(|slice| u32::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从指令数据中读取 u16（小端序）- SIMD 优化
 #[inline(always)]
 pub fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2)
-        .map(|slice| u16::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 2).map(|slice| u16::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从指令数据中读取 u8
@@ -73,15 +63,13 @@ pub fn read_u8(data: &[u8], offset: usize) -> Option<u8> {
 /// 从指令数据中读取 i32（小端序）- SIMD 优化
 #[inline(always)]
 pub fn read_i32_le(data: &[u8], offset: usize) -> Option<i32> {
-    data.get(offset..offset + 4)
-        .map(|slice| i32::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 4).map(|slice| i32::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从指令数据中读取 u128（小端序）- SIMD 优化
 #[inline(always)]
 pub fn read_u128_le(data: &[u8], offset: usize) -> Option<u128> {
-    data.get(offset..offset + 16)
-        .map(|slice| u128::from_le_bytes(slice.try_into().unwrap()))
+    data.get(offset..offset + 16).map(|slice| u128::from_le_bytes(slice.try_into().unwrap()))
 }
 
 /// 从指令数据中读取布尔值
@@ -93,8 +81,7 @@ pub fn read_bool(data: &[u8], offset: usize) -> Option<bool> {
 /// 从指令数据中读取公钥 - SIMD 优化
 #[inline(always)]
 pub fn read_pubkey(data: &[u8], offset: usize) -> Option<Pubkey> {
-    data.get(offset..offset + 32)
-        .and_then(|slice| Pubkey::try_from(slice).ok())
+    data.get(offset..offset + 32).and_then(|slice| Pubkey::try_from(slice).ok())
 }
 
 /// 从账户列表中获取账户
@@ -229,9 +216,9 @@ pub fn get_instruction_account_getter<'a>(
     })
 }
 
+use crate::core::clock::now_us;
 /// 预构建的 inner_instructions 索引，用于 O(1) 查找
 use std::collections::HashMap;
-use crate::core::clock::now_us;
 
 /// InnerInstructions 索引缓存
 pub struct InnerInstructionsIndex<'a> {
@@ -252,7 +239,10 @@ impl<'a> InnerInstructionsIndex<'a> {
 
     /// O(1) 查找 inner_instructions
     #[inline]
-    pub fn get(&self, outer_index: u32) -> Option<&'a yellowstone_grpc_proto::prelude::InnerInstructions> {
+    pub fn get(
+        &self,
+        outer_index: u32,
+    ) -> Option<&'a yellowstone_grpc_proto::prelude::InnerInstructions> {
         self.index_map.get(&outer_index).copied()
     }
 }
@@ -268,11 +258,7 @@ pub fn get_instruction_account_getter_indexed<'a>(
 ) -> Option<impl Fn(usize) -> Pubkey + 'a> {
     let accounts = if index.1 >= 0 {
         // O(1) 查找
-        inner_index.get(index.0 as u32)?
-            .instructions
-            .get(index.1 as usize)?
-            .accounts
-            .as_slice()
+        inner_index.get(index.0 as u32)?.instructions.get(index.1 as usize)?.accounts.as_slice()
     } else {
         transaction
             .as_ref()?

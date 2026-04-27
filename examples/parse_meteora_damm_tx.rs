@@ -12,9 +12,9 @@
 //! SOLANA_RPC_URL=https://your-rpc.com TX_SIGNATURE=<your_tx_sig> cargo run --example parse_meteora_damm_tx --release
 //! ```
 
+use sol_parser_sdk::{parse_transaction_from_rpc, DexEvent};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::signature::Signature;
-use sol_parser_sdk::{parse_transaction_from_rpc, DexEvent};
 use std::str::FromStr;
 
 fn main() {
@@ -41,8 +41,7 @@ fn main() {
     let client = RpcClient::new(rpc_url);
 
     // 解析签名
-    let signature = Signature::from_str(&tx_sig)
-        .expect("Failed to parse signature");
+    let signature = Signature::from_str(&tx_sig).expect("Failed to parse signature");
 
     // 使用 sol-parser-sdk 直接解析交易
     println!("\n=== Parsing with sol-parser-sdk ===");
@@ -75,14 +74,20 @@ fn main() {
                     println!("│ Event #{}: 🔄 Meteora DAMM SWAP (V2)", i + 1);
                     println!("├─────────────────────────────────────────────────────────────");
                     println!("│ Pool       : {}", e.pool);
-                    println!("│ Direction  : {}", if e.trade_direction == 0 { "A→B" } else { "B→A" });
+                    println!(
+                        "│ Direction  : {}",
+                        if e.trade_direction == 0 { "A→B" } else { "B→A" }
+                    );
                     println!("│ Amount In  : {}", e.amount_in);
                     println!("│ Min Out    : {}", e.minimum_amount_out);
                     println!("│ Actual Out : {}", e.output_amount);
                     println!("│ Actual In  : {}", e.actual_amount_in);
                     println!("│ LP Fee     : {}", e.lp_fee);
                     println!("│ Protocol   : {}", e.protocol_fee);
-                    println!("│ Referral   : {} (has_referral: {})", e.referral_fee, e.has_referral);
+                    println!(
+                        "│ Referral   : {} (has_referral: {})",
+                        e.referral_fee, e.has_referral
+                    );
                     println!("│ Sqrt Price : {}", e.next_sqrt_price);
                     println!("└─────────────────────────────────────────────────────────────\n");
                 }
