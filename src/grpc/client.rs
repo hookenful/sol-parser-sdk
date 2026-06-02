@@ -7,6 +7,7 @@
 //! - Ordered: 1-50ms 完全有序
 
 use super::buffers::{MicroBatchBuffer, SlotBuffer};
+use super::deduper::TxDeduper;
 use super::subscribe_builder::{
     build_subscribe_request, build_subscribe_request_with_event_filter,
 };
@@ -18,7 +19,7 @@ use crate::logs::timestamp_to_microseconds;
 use crate::DexEvent;
 use crossbeam_queue::ArrayQueue;
 use futures::{SinkExt, StreamExt};
-use log::error;
+use log::{error, info, warn};
 use memchr::memmem;
 use once_cell::sync::Lazy;
 use solana_sdk::pubkey::Pubkey;
@@ -42,6 +43,14 @@ pub struct YellowstoneGrpc {
     token: Option<String>,
     config: ClientConfig,
     control_tx: Arc<Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
+    last_filters: Arc<Mutex<SubscriptionFilters>>,
+    tx_deduper: Option<Arc<TxDeduper>>,
+}
+
+#[derive(Default)]
+struct SubscriptionFilters {
+    transaction_filters: Vec<TransactionFilter>,
+    account_filters: Vec<AccountFilter>,
 }
 
 impl YellowstoneGrpc {
@@ -55,6 +64,8 @@ impl YellowstoneGrpc {
             token,
             config: ClientConfig::default(),
             control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
         })
     }
 
@@ -64,7 +75,19 @@ impl YellowstoneGrpc {
         config: ClientConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         crate::warmup::warmup_parser();
-        Ok(Self { endpoint, token, config, control_tx: Arc::new(Mutex::new(None)) })
+        Ok(Self {
+            endpoint,
+            token,
+            config,
+            control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
+        })
+    }
+
+    pub fn with_tx_deduper(mut self, tx_deduper: Arc<TxDeduper>) -> Self {
+        self.tx_deduper = Some(tx_deduper);
+        self
     }
 
     /// 订阅 DEX 事件（自动重连）
@@ -78,20 +101,21 @@ impl YellowstoneGrpc {
         let queue_clone = Arc::clone(&queue);
         let self_clone = self.clone();
 
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters;
+            stored.account_filters = account_filters;
+        }
+
         tokio::spawn(async move {
             let mut delay = 1u64;
             loop {
-                match self_clone
-                    .stream_events(
-                        &transaction_filters,
-                        &account_filters,
-                        &event_type_filter,
-                        &queue_clone,
-                    )
-                    .await
-                {
+                match self_clone.stream_events(&event_type_filter, &queue_clone).await {
                     Ok(_) => delay = 1,
-                    Err(e) => println!("❌ gRPC error: {} - retry in {}s", e, delay),
+                    Err(e) => warn!(
+                        "gRPC error on endpoint {}: {} - retry in {}s",
+                        self_clone.endpoint, e, delay
+                    ),
                 }
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(60);
@@ -107,27 +131,37 @@ impl YellowstoneGrpc {
         transaction_filters: Vec<TransactionFilter>,
         account_filters: Vec<AccountFilter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let request = build_subscribe_request(&transaction_filters, &account_filters);
+
+        {
+            let mut stored = self.last_filters.lock().await;
+            stored.transaction_filters = transaction_filters;
+            stored.account_filters = account_filters;
+        }
+
         let sender = self.control_tx.lock().await.as_ref().ok_or("No active subscription")?.clone();
 
-        let request = build_subscribe_request(&transaction_filters, &account_filters);
         sender.send(request).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub async fn stop(&self) {
-        println!("🛑 Stopping gRPC subscription...");
+        info!("Stopping gRPC subscription");
     }
 
     // ==================== 核心事件流处理 ====================
 
     async fn stream_events(
         &self,
-        tx_filters: &[TransactionFilter],
-        acc_filters: &[AccountFilter],
         event_filter: &Option<EventTypeFilter>,
         queue: &Arc<ArrayQueue<DexEvent>>,
     ) -> Result<(), String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let (tx_filters, acc_filters) = {
+            let stored = self.last_filters.lock().await;
+            (stored.transaction_filters.clone(), stored.account_filters.clone())
+        };
 
         // 构建客户端
         let mut builder = GeyserGrpcClient::build_from_shared(self.endpoint.clone())
@@ -140,18 +174,36 @@ impl YellowstoneGrpc {
             builder =
                 builder.connect_timeout(Duration::from_millis(self.config.connection_timeout_ms));
         }
+        if self.config.request_timeout_ms > 0 {
+            builder = builder.timeout(Duration::from_millis(self.config.request_timeout_ms));
+        }
         if self.config.enable_tls {
             builder = builder
                 .tls_config(ClientTlsConfig::new().with_native_roots())
                 .map_err(|e| e.to_string())?;
         }
+        if self.config.buffer_size > 0 {
+            builder = builder.buffer_size(Some(self.config.buffer_size));
+        }
+        if self.config.keep_alive_interval_ms > 0 {
+            let interval = Duration::from_millis(self.config.keep_alive_interval_ms);
+            builder = builder
+                .http2_keep_alive_interval(interval)
+                .keep_alive_while_idle(true)
+                .tcp_keepalive(Some(interval));
+        }
+        if self.config.keep_alive_timeout_ms > 0 {
+            builder = builder
+                .keep_alive_timeout(Duration::from_millis(self.config.keep_alive_timeout_ms));
+        }
+        builder = builder.tcp_nodelay(true).http2_adaptive_window(true);
 
         let mut client = builder.connect().await.map_err(|e| e.to_string())?;
         let request = build_subscribe_request_with_event_filter(
-            tx_filters,
-            acc_filters,
+            &tx_filters,
+            &acc_filters,
             event_filter.as_ref(),
-            CommitmentLevel::Processed,
+            self.config.commitment.into(),
         );
 
         let (subscribe_tx, mut stream) =
@@ -236,17 +288,24 @@ impl YellowstoneGrpc {
     }
 
     fn print_mode_info(&self) {
-        match self.config.order_mode {
-            OrderMode::Unordered => println!("✅ Unordered Mode (10-20μs)"),
-            OrderMode::Ordered => {
-                println!("✅ Ordered Mode (timeout={}ms)", self.config.order_timeout_ms)
-            }
+        info!(
+            "{}",
+            Self::mode_info_message(
+                self.config.order_mode,
+                self.config.order_timeout_ms,
+                self.config.micro_batch_us,
+            )
+        );
+    }
+
+    fn mode_info_message(mode: OrderMode, timeout_ms: u64, micro_batch_us: u64) -> String {
+        match mode {
+            OrderMode::Unordered => "Unordered Mode (10-20us)".to_string(),
+            OrderMode::Ordered => format!("Ordered Mode (timeout={timeout_ms}ms)"),
             OrderMode::StreamingOrdered => {
-                println!("✅ StreamingOrdered Mode (timeout={}ms)", self.config.order_timeout_ms)
+                format!("StreamingOrdered Mode (timeout={timeout_ms}ms)")
             }
-            OrderMode::MicroBatch => {
-                println!("✅ MicroBatch Mode (window={}μs)", self.config.micro_batch_us)
-            }
+            OrderMode::MicroBatch => format!("MicroBatch Mode (window={micro_batch_us}us)"),
         }
     }
 
@@ -370,6 +429,23 @@ impl YellowstoneGrpc {
         block_us: i64,
     ) {
         let slot = tx.slot;
+
+        if let Some(deduper) = &self.tx_deduper {
+            let Some(info) = tx.transaction.as_ref() else { return };
+            let sig = extract_signature(&info.signature);
+            let log_enabled = log::log_enabled!(log::Level::Info);
+            let log_label = deduper.log_label();
+            let start_us = if log_enabled && log_label.is_some() { now_micros() } else { 0 };
+            if !deduper.check(sig, slot, grpc_us) {
+                return;
+            }
+            if let Some(label) = log_label {
+                if log_enabled {
+                    let dedup_us = now_micros().saturating_sub(start_us);
+                    info!("{label}: {}: {sig}: {slot}: dedup_us={dedup_us}", self.endpoint);
+                }
+            }
+        }
 
         match mode {
             OrderMode::Unordered => {
@@ -654,4 +730,44 @@ fn parse_instructions(
         grpc_us,
         filter,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_subscription_remembers_filters_for_reconnect_even_without_active_stream() {
+        let client = YellowstoneGrpc {
+            endpoint: "http://127.0.0.1:10000".to_string(),
+            token: None,
+            config: ClientConfig::low_latency(),
+            control_tx: Arc::new(Mutex::new(None)),
+            last_filters: Arc::new(Mutex::new(SubscriptionFilters::default())),
+            tx_deduper: None,
+        };
+        let tx_filters = vec![TransactionFilter::new().require_account("required-account")];
+        let acc_filters = vec![AccountFilter::new().add_account("watched-account")];
+
+        let result = client.update_subscription(tx_filters, acc_filters).await;
+
+        assert!(result.is_err(), "no active stream should still return an update error");
+        let stored = client.last_filters.lock().await;
+        assert_eq!(stored.transaction_filters.len(), 1);
+        assert_eq!(stored.transaction_filters[0].account_required, ["required-account"]);
+        assert_eq!(stored.account_filters.len(), 1);
+        assert_eq!(stored.account_filters[0].account, ["watched-account"]);
+    }
+
+    #[test]
+    fn mode_info_message_uses_configured_order_settings() {
+        assert_eq!(
+            YellowstoneGrpc::mode_info_message(OrderMode::MicroBatch, 75, 25),
+            "MicroBatch Mode (window=25us)"
+        );
+        assert_eq!(
+            YellowstoneGrpc::mode_info_message(OrderMode::Ordered, 75, 25),
+            "Ordered Mode (timeout=75ms)"
+        );
+    }
 }

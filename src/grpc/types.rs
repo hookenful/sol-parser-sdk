@@ -4,6 +4,7 @@ use yellowstone_grpc_proto::geyser::{
     subscribe_request_filter_accounts_filter_memcmp::Data as MemcmpDataOneof,
     SubscribeRequestFilterAccountsFilter, SubscribeRequestFilterAccountsFilterMemcmp,
 };
+use yellowstone_grpc_proto::prelude::CommitmentLevel;
 
 /// 事件输出顺序模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -23,6 +24,24 @@ pub enum OrderMode {
     /// 窗口大小由 micro_batch_us 配置（默认 100μs）
     /// 延迟约 50-200μs，接近 Unordered 但保证顺序
     MicroBatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CommitmentMode {
+    #[default]
+    Processed,
+    Confirmed,
+    Finalized,
+}
+
+impl From<CommitmentMode> for CommitmentLevel {
+    fn from(value: CommitmentMode) -> Self {
+        match value {
+            CommitmentMode::Processed => CommitmentLevel::Processed,
+            CommitmentMode::Confirmed => CommitmentLevel::Confirmed,
+            CommitmentMode::Finalized => CommitmentLevel::Finalized,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +68,8 @@ pub struct ClientConfig {
     /// MicroBatch 模式下的时间窗口大小（微秒）
     /// 默认 100μs，可根据网络状况调整
     pub micro_batch_us: u64,
+    /// Yellowstone subscription commitment.
+    pub commitment: CommitmentMode,
 }
 
 impl Default for ClientConfig {
@@ -67,6 +88,7 @@ impl Default for ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 100,
             micro_batch_us: 100, // 100μs 默认窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 }
@@ -87,6 +109,7 @@ impl ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 50,
             micro_batch_us: 50, // 50μs 更激进的窗口
+            commitment: CommitmentMode::Processed,
         }
     }
 
@@ -105,6 +128,7 @@ impl ClientConfig {
             order_mode: OrderMode::Unordered,
             order_timeout_ms: 200,
             micro_batch_us: 200, // 200μs 高吞吐模式
+            commitment: CommitmentMode::Processed,
         }
     }
 }
