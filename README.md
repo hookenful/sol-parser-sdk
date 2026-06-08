@@ -108,16 +108,45 @@ sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, feature
 
 ```toml
 # Add to your Cargo.toml
-sol-parser-sdk = "0.5.5"
+sol-parser-sdk = "0.5.11"
 ```
 
 Or with the zero-copy parser (maximum performance):
 
 ```toml
-sol-parser-sdk = { version = "0.5.5", default-features = false, features = ["parse-zero-copy"] }
+sol-parser-sdk = { version = "0.5.11", default-features = false, features = ["parse-zero-copy"] }
 ```
 
 ### Release Notes
+
+#### v0.5.11
+
+- Parses PumpSwap `create_pool` instruction args, including `index`, deposit amounts, `coin_creator`, `is_mayhem_mode`, and `is_cashback_coin`.
+- Fixes PumpSwap `create_pool` instruction account mapping to match the IDL (`pool`, `creator`, `base_mint`, `quote_mint`, LP/user token accounts).
+- Preserves `is_cashback_coin` when instruction-derived CreatePool data is merged with log-derived CreatePool data.
+- Clarifies source semantics: the PumpSwap log `CreatePoolEvent` IDL does not carry `is_cashback_coin`; ShredStream/outer-instruction parsing can read it from instruction data, and account subscriptions can read the authoritative `Pool` account field.
+
+#### v0.5.10
+
+- Aligns PumpSwap `CreatePoolEvent` with the on-chain IDL: the event exposes `is_mayhem_mode` but not `is_cashback_coin`.
+- Keeps PumpSwap `is_cashback_coin` on the `AccountPumpSwapPool` account event, where the on-chain `Pool` account stores it.
+- Fixes the PumpSwap CreatePool log payload length check to include the final `is_mayhem_mode` byte.
+- Documents that ShredStream CreatePool events cannot recover `is_cashback_coin` because Shred entries do not include account bodies.
+
+#### v0.5.9
+
+- Implements real Yellowstone gRPC `stop()` behavior by signaling, aborting, and awaiting the active subscription task.
+- Serializes gRPC subscription lifecycle transitions so concurrent stop/re-subscribe calls cannot orphan retry loops.
+- Uses a per-subscription stop signal so a new subscription cannot accidentally reset the stop state for an older task.
+- Labels stream failures as `Grpc Stream error` to distinguish them from ShredStream logs.
+- Makes the warmup test independent from global test execution order.
+
+#### v0.5.8
+
+- Adds configurable ShredStream event filter examples, including Pump.fun trade, create-trade, buy, sell, and buy-exact-sol-in presets.
+- Clarifies Pump.fun IDL instruction names in `ix_name`: `buy`, `buy_v2`, `buy_exact_sol_in`, `buy_exact_quote_in_v2`, `sell`, and `sell_v2`.
+- Keeps Pump.fun filter families aligned with IDL semantics: `PumpFunBuy` covers all buy instructions, `PumpFunSell` covers all sell instructions, and `PumpFunTrade` covers all buy and sell instructions.
+- Ensures subscribing only to `PumpFunTrade` emits unified `DexEvent::PumpFunTrade` events on the ShredStream hot path.
 
 #### v0.5.5
 
@@ -464,6 +493,7 @@ let event_filter = EventTypeFilter::include_only(vec![
     EventType::PumpFunCreate,
     EventType::PumpFeesUpdateFeeShares,
     EventType::PumpSwapCreatePool,
+    EventType::AccountPumpSwapPool,
     EventType::RaydiumCpmmInitialize,
     EventType::RaydiumClmmCreatePool,
     EventType::OrcaWhirlpoolPoolInitialized,
@@ -472,6 +502,13 @@ let event_filter = EventTypeFilter::include_only(vec![
     EventType::MeteoraDlmmInitializePool,
 ]);
 ```
+
+`PumpSwapCreatePool` includes `is_mayhem_mode`. For `is_cashback_coin`,
+ShredStream/outer-instruction parsing reads the flag from the `create_pool`
+instruction args, while log-only `CreatePoolEvent` payloads keep the default
+`false` because the log event IDL does not carry this field. The authoritative
+account value is also available from
+`PumpSwapPoolAccountEvent.pool.is_cashback_coin`.
 
 **Performance Impact:**
 - 60-80% reduction in processing

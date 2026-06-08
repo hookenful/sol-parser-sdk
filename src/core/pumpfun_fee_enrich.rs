@@ -25,6 +25,23 @@ fn pumpfun_buy_like_mint_fee(e: &DexEvent) -> Option<(Pubkey, Pubkey)> {
     }
 }
 
+fn pumpfun_trade_mint_quote(e: &DexEvent) -> Option<(Pubkey, Pubkey)> {
+    let t = match e {
+        DexEvent::PumpFunTrade(t)
+        | DexEvent::PumpFunBuy(t)
+        | DexEvent::PumpFunSell(t)
+        | DexEvent::PumpFunBuyExactSolIn(t) => t,
+        _ => return None,
+    };
+    if t.mint == Pubkey::default()
+        || t.quote_mint == Pubkey::default()
+        || is_pumpfun_solscan_sol_quote_mint(t.quote_mint)
+    {
+        return None;
+    }
+    Some((t.mint, t.quote_mint))
+}
+
 /// 扫描同签名下的买入类事件，按 mint 记录 `fee_recipient`（ShredStream 外层的 buy 已从 accounts[1] 解析）。
 pub fn enrich_create_observed_fee_recipient(events: &mut [DexEvent]) {
     let mut mint_to_fee: HashMap<Pubkey, Pubkey> = HashMap::new();
@@ -52,6 +69,39 @@ pub fn enrich_create_observed_fee_recipient(events: &mut [DexEvent]) {
                     if let Some(&f) = mint_to_fee.get(&c.mint) {
                         c.observed_fee_recipient = f;
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn enrich_create_quote_mint_from_trades(events: &mut [DexEvent]) {
+    let mut mint_to_quote: HashMap<Pubkey, Pubkey> = HashMap::new();
+    for e in events.iter() {
+        if let Some((mint, quote_mint)) = pumpfun_trade_mint_quote(e) {
+            mint_to_quote.entry(mint).or_insert(quote_mint);
+        }
+    }
+    if mint_to_quote.is_empty() {
+        return;
+    }
+    for e in events.iter_mut() {
+        match e {
+            DexEvent::PumpFunCreate(c) => {
+                if (c.quote_mint == Pubkey::default()
+                    || is_pumpfun_solscan_sol_quote_mint(c.quote_mint))
+                    && mint_to_quote.contains_key(&c.mint)
+                {
+                    c.quote_mint = mint_to_quote[&c.mint];
+                }
+            }
+            DexEvent::PumpFunCreateV2(c) => {
+                if (c.quote_mint == Pubkey::default()
+                    || is_pumpfun_solscan_sol_quote_mint(c.quote_mint))
+                    && mint_to_quote.contains_key(&c.mint)
+                {
+                    c.quote_mint = mint_to_quote[&c.mint];
                 }
             }
             _ => {}
@@ -209,13 +259,14 @@ pub fn enrich_pumpfun_trades_from_create_instructions(events: &mut [DexEvent]) {
 pub fn enrich_pumpfun_same_tx_post_merge(events: &mut [DexEvent]) {
     enrich_create_v2_from_create_events(events);
     enrich_create_observed_fee_recipient(events);
+    enrich_create_quote_mint_from_trades(events);
     enrich_pumpfun_trades_from_create_instructions(events);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::events::EventMetadata;
+    use crate::core::events::{EventMetadata, PUMPFUN_SOLSCAN_SOL_QUOTE_MINT};
     use solana_sdk::signature::Signature;
 
     #[test]
@@ -341,6 +392,43 @@ mod tests {
             assert_eq!(c.name, "USD Coin Pool");
         } else {
             panic!("expected CreateV2");
+        }
+    }
+
+    #[test]
+    fn enrich_replaces_create_sol_placeholder_with_trade_quote_mint() {
+        let sig = Signature::default();
+        let mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let meta = EventMetadata {
+            signature: sig,
+            slot: 1,
+            tx_index: 0,
+            block_time_us: 0,
+            grpc_recv_us: 0,
+            recent_blockhash: None,
+        };
+        let mut events: Vec<DexEvent> = vec![
+            DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
+                metadata: meta.clone(),
+                mint,
+                quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+                ..Default::default()
+            }),
+            DexEvent::PumpFunBuy(PumpFunTradeEvent {
+                metadata: meta,
+                mint,
+                quote_mint,
+                ..Default::default()
+            }),
+        ];
+
+        enrich_create_quote_mint_from_trades(&mut events);
+
+        if let DexEvent::PumpFunCreate(c) = &events[0] {
+            assert_eq!(c.quote_mint, quote_mint);
+        } else {
+            panic!("expected Create");
         }
     }
 }

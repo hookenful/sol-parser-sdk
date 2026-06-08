@@ -10,14 +10,18 @@ use solana_sdk::{pubkey, pubkey::Pubkey, signature::Signature};
 
 /// Solscan SOL quote-mint sentinel used when PumpFun legacy events omit quote_mint.
 ///
-/// PumpFun legacy SOL instructions and older trade logs do not carry an SPL quote mint.
+/// PumpFun native-SOL instructions and older trade logs do not carry a real SPL quote mint.
 /// We expose the same SOL placeholder Solscan displays instead of `Pubkey::default()`.
 pub const PUMPFUN_SOLSCAN_SOL_QUOTE_MINT: Pubkey =
     pubkey!("So11111111111111111111111111111111111111111");
 
+/// SPL wrapped-SOL mint. Pump CreateV2 may expose this as a SOL quote sentinel, but it still
+/// represents native SOL semantics unless a consumer explicitly chooses WSOL settlement.
+pub const PUMPFUN_WSOL_QUOTE_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+
 #[inline]
 pub fn normalize_pumpfun_quote_mint(quote_mint: Pubkey) -> Pubkey {
-    if quote_mint == Pubkey::default() {
+    if quote_mint == Pubkey::default() || quote_mint == PUMPFUN_WSOL_QUOTE_MINT {
         PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
     } else {
         quote_mint
@@ -26,7 +30,7 @@ pub fn normalize_pumpfun_quote_mint(quote_mint: Pubkey) -> Pubkey {
 
 #[inline]
 pub fn is_pumpfun_solscan_sol_quote_mint(quote_mint: Pubkey) -> bool {
-    quote_mint == PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
+    normalize_pumpfun_quote_mint(quote_mint) == PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
 }
 
 /// 基础元数据 - 所有事件共享的字段
@@ -52,6 +56,15 @@ mod tests {
 
         assert_eq!(quote_mint, PUMPFUN_SOLSCAN_SOL_QUOTE_MINT);
         assert_eq!(quote_mint.to_string(), "So11111111111111111111111111111111111111111");
+    }
+
+    #[test]
+    fn pumpfun_wsol_quote_mint_uses_solscan_sol_sentinel() {
+        assert_eq!(
+            normalize_pumpfun_quote_mint(PUMPFUN_WSOL_QUOTE_MINT),
+            PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
+        );
+        assert!(is_pumpfun_solscan_sol_quote_mint(PUMPFUN_WSOL_QUOTE_MINT));
     }
 }
 
@@ -450,6 +463,9 @@ pub struct PumpFunCreateTokenEvent {
     /// Initial virtual quote reserves. For SOL pools this is the SOL-side reserve;
     /// for USDC pools this is the USDC-side reserve.
     pub virtual_quote_reserves: u64,
+    /// Original PumpFun instruction name: `"create"` or `"create_v2"`.
+    #[borsh(skip)]
+    pub ix_name: String,
     #[borsh(skip)]
     pub mint_authority: Pubkey,
     #[borsh(skip)]
@@ -504,6 +520,9 @@ pub struct PumpFunCreateV2TokenEvent {
     pub quote_mint: Pubkey,
     #[borsh(skip)]
     pub virtual_quote_reserves: u64,
+    /// Original PumpFun instruction name: `"create"` or `"create_v2"`.
+    #[borsh(skip)]
+    pub ix_name: String,
     #[borsh(skip)]
     pub mint_authority: Pubkey,
     #[borsh(skip)]
@@ -720,8 +739,12 @@ pub struct PumpSwapCreatePoolEvent {
     pub user_base_token_account: Pubkey,
     pub user_quote_token_account: Pubkey,
     pub coin_creator: Pubkey,
-    /// IDL CreatePoolEvent 最后一列
+    /// IDL CreatePoolEvent last field.
     pub is_mayhem_mode: bool,
+    /// create_pool instruction arg and Pool account field. Log-only CreatePoolEvent payloads do
+    /// not carry this value, so log-only parses keep the default `false`.
+    #[serde(default)]
+    pub is_cashback_coin: bool,
 }
 
 /// PumpSwap Pool Created Event - 指令解析版本

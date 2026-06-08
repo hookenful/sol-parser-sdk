@@ -28,6 +28,31 @@
 //! }
 //! ```
 //!
+//! ## 事件过滤
+//! ShredStream proxy 本身推送完整 entry 流，不能像 Yellowstone gRPC 一样把交易账户过滤条件下发给服务端。
+//! SDK 仍支持本地热路径事件过滤：使用 [`ShredStreamClient::subscribe_with_filter`] 或
+//! [`ShredStreamClient::subscribe_with_filter_callback`]，只解析/回调指定的 SDK 事件类型。
+//!
+//! ```rust,no_run
+//! use sol_parser_sdk::grpc::{EventType, EventTypeFilter};
+//! use sol_parser_sdk::shredstream::ShredStreamClient;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     let client = ShredStreamClient::new("http://localhost:10800").await?;
+//!     let filter = EventTypeFilter::include_only(vec![EventType::PumpFunTrade]);
+//!     let queue = client.subscribe_with_filter(Some(filter)).await?;
+//!
+//!     loop {
+//!         if let Some(event) = queue.pop() {
+//!             println!("Received: {:?}", event);
+//!         } else {
+//!             tokio::task::yield_now().await;
+//!         }
+//!     }
+//! }
+//! ```
+//!
 //! ## 限制说明
 //! ShredStream 相比 gRPC 订阅有以下限制：
 //! - 仅 `static_account_keys()`：V0 交易若带 **地址查找表（ALT）**，ALT-loaded 指令账户会以 `Pubkey::default()` 占位；若程序 ID 也来自 ALT，会按指令 discriminator 做 best-effort 解析。

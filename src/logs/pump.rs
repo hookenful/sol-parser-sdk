@@ -450,6 +450,7 @@ fn parse_create_event_optimized(
             is_cashback_enabled,
             quote_mint,
             virtual_quote_reserves,
+            ix_name: "create".to_string(),
             ..Default::default()
         }))
     }
@@ -1118,6 +1119,7 @@ pub fn parse_create_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
             is_cashback_enabled,
             quote_mint,
             virtual_quote_reserves,
+            ix_name: "create".to_string(),
             ..Default::default()
         }))
     }

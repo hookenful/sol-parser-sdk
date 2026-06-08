@@ -286,7 +286,7 @@ fn parse_sell_instruction(
 /// Parse create_pool instruction
 #[allow(dead_code)]
 fn parse_create_pool_instruction(
-    _data: &[u8],
+    data: &[u8],
     accounts: &[Pubkey],
     signature: Signature,
     slot: u64,
@@ -301,9 +301,19 @@ fn parse_create_pool_instruction(
 
     Some(DexEvent::PumpSwapCreatePool(PumpSwapCreatePoolEvent {
         metadata,
-        creator: get_account(accounts, 0).unwrap_or_default(),
-        base_mint: get_account(accounts, 2).unwrap_or_default(),
-        quote_mint: get_account(accounts, 3).unwrap_or_default(),
+        pool: get_account(accounts, 0).unwrap_or_default(),
+        creator: get_account(accounts, 2).unwrap_or_default(),
+        base_mint: get_account(accounts, 3).unwrap_or_default(),
+        quote_mint: get_account(accounts, 4).unwrap_or_default(),
+        lp_mint: get_account(accounts, 5).unwrap_or_default(),
+        user_base_token_account: get_account(accounts, 6).unwrap_or_default(),
+        user_quote_token_account: get_account(accounts, 7).unwrap_or_default(),
+        index: read_u16_le(data, 0).unwrap_or_default(),
+        base_amount_in: read_u64_le(data, 2).unwrap_or_default(),
+        quote_amount_in: read_u64_le(data, 10).unwrap_or_default(),
+        coin_creator: read_pubkey(data, 18).unwrap_or_default(),
+        is_mayhem_mode: read_bool(data, 50).unwrap_or_default(),
+        is_cashback_coin: read_option_bool_idl(data, 51).unwrap_or_default(),
         ..Default::default()
     }))
 }
@@ -373,6 +383,18 @@ mod tests {
         out
     }
 
+    fn create_pool_data(is_cashback_coin: bool) -> Vec<u8> {
+        let coin_creator = Pubkey::new_from_array([7; 32]);
+        let mut out = Vec::with_capacity(52);
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&100u64.to_le_bytes());
+        out.extend_from_slice(&200u64.to_le_bytes());
+        out.extend_from_slice(coin_creator.as_ref());
+        out.push(1);
+        out.push(u8::from(is_cashback_coin));
+        out
+    }
+
     fn accounts(n: usize) -> Vec<Pubkey> {
         (0..n).map(|_| Pubkey::new_unique()).collect()
     }
@@ -438,6 +460,39 @@ mod tests {
                 assert_eq!(t.fee_recipient_quote_token_account, acc[25]);
             }
             other => panic!("expected PumpSwapSell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pumpswap_create_pool_reads_instruction_args_and_idl_accounts() {
+        let acc = accounts(18);
+        let ev = parse_create_pool_instruction(
+            &create_pool_data(true),
+            &acc,
+            Signature::default(),
+            1,
+            0,
+            None,
+        )
+        .expect("create_pool");
+
+        match ev {
+            DexEvent::PumpSwapCreatePool(t) => {
+                assert_eq!(t.pool, acc[0]);
+                assert_eq!(t.creator, acc[2]);
+                assert_eq!(t.base_mint, acc[3]);
+                assert_eq!(t.quote_mint, acc[4]);
+                assert_eq!(t.lp_mint, acc[5]);
+                assert_eq!(t.user_base_token_account, acc[6]);
+                assert_eq!(t.user_quote_token_account, acc[7]);
+                assert_eq!(t.index, 42);
+                assert_eq!(t.base_amount_in, 100);
+                assert_eq!(t.quote_amount_in, 200);
+                assert_eq!(t.coin_creator, Pubkey::new_from_array([7; 32]));
+                assert!(t.is_mayhem_mode);
+                assert!(t.is_cashback_coin);
+            }
+            other => panic!("expected PumpSwapCreatePool, got {other:?}"),
         }
     }
 }

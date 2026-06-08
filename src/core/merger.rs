@@ -558,6 +558,9 @@ fn merge_pumpfun_create_log_preferred(
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
+        log.ix_name = ix.ix_name;
+    }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
 }
@@ -584,6 +587,9 @@ fn merge_pumpfun_create_v2_into_create_log_preferred(
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
+        log.ix_name = ix.ix_name;
+    }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
 }
@@ -610,6 +616,9 @@ fn merge_pumpfun_create_into_create_v2_log_preferred(
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
+        log.ix_name = ix.ix_name;
+    }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
 }
@@ -628,6 +637,9 @@ fn merge_pumpfun_create_v2_log_preferred(
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
+        log.ix_name = ix.ix_name;
+    }
     fill_pk(&mut log.mint_authority, ix.mint_authority);
     fill_pk(&mut log.associated_bonding_curve, ix.associated_bonding_curve);
     fill_pk(&mut log.global, ix.global);
@@ -745,6 +757,8 @@ fn merge_pumpswap_create_pool_log_preferred(
     fill_pk(&mut log.user_base_token_account, ix.user_base_token_account);
     fill_pk(&mut log.user_quote_token_account, ix.user_quote_token_account);
     fill_pk(&mut log.coin_creator, ix.coin_creator);
+    log.is_mayhem_mode |= ix.is_mayhem_mode;
+    log.is_cashback_coin |= ix.is_cashback_coin;
 }
 
 #[inline]

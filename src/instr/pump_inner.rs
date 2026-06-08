@@ -478,6 +478,7 @@ fn parse_create_event_fields(data: &[u8], metadata: EventMetadata) -> Option<Dex
         is_cashback_enabled,
         quote_mint,
         virtual_quote_reserves,
+        ix_name: "create".to_string(),
         ..Default::default()
     }))
 }
@@ -574,6 +575,7 @@ fn parse_create_event_inner_zero_copy(data: &[u8], metadata: EventMetadata) -> O
             is_cashback_enabled,
             quote_mint,
             virtual_quote_reserves,
+            ix_name: "create".to_string(),
             ..Default::default()
         }))
     }

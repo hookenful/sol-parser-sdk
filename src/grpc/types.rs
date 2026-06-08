@@ -426,28 +426,17 @@ impl EventTypeFilter {
             if include_only.contains(&event_type) {
                 return true;
             }
-            // Special case: PumpFunTrade discriminator is shared by Buy/Sell/BuyExactSolIn
-            // If filter includes any of these specific types, allow PumpFunTrade through
-            // (secondary filtering will happen after parsing)
-            if event_type == EventType::PumpFunTrade {
-                return include_only.iter().any(|t| {
-                    matches!(
-                        t,
-                        EventType::PumpFunBuy
-                            | EventType::PumpFunSell
-                            | EventType::PumpFunBuyExactSolIn
-                    )
-                });
-            }
             if matches!(
                 event_type,
                 EventType::PumpFunBuy | EventType::PumpFunSell | EventType::PumpFunBuyExactSolIn
             ) {
-                if include_only.contains(&EventType::PumpFunTrade) {
+                if pumpfun_trade_filter_is_generic(include_only) {
                     return true;
                 }
-                if is_pumpfun_buy_family(event_type) {
-                    return include_only.iter().any(|t| is_pumpfun_buy_family(*t));
+                if event_type == EventType::PumpFunBuyExactSolIn
+                    && pumpfun_buy_filter_is_generic(include_only)
+                {
+                    return true;
                 }
                 return false;
             }
@@ -471,8 +460,8 @@ impl EventTypeFilter {
             {
                 return false;
             }
-            if is_pumpfun_buy_family(event_type)
-                && exclude_types.iter().any(|t| is_pumpfun_buy_family(*t))
+            if event_type == EventType::PumpFunBuyExactSolIn
+                && exclude_types.contains(&EventType::PumpFunBuy)
             {
                 return false;
             }
@@ -513,26 +502,22 @@ impl EventTypeFilter {
         use crate::core::events::DexEvent;
 
         let Some(ref include_only) = self.include_only else { return event };
-        if !include_only.contains(&EventType::PumpFunTrade) {
-            return event;
+        if pumpfun_trade_filter_is_generic(include_only) {
+            return match event {
+                DexEvent::PumpFunBuy(t)
+                | DexEvent::PumpFunSell(t)
+                | DexEvent::PumpFunBuyExactSolIn(t) => DexEvent::PumpFunTrade(t),
+                other => other,
+            };
+        }
+        if pumpfun_buy_filter_is_generic(include_only) {
+            return match event {
+                DexEvent::PumpFunBuyExactSolIn(t) => DexEvent::PumpFunBuy(t),
+                other => other,
+            };
         }
 
-        let has_specific_trade_filter = include_only.iter().any(|t| {
-            matches!(
-                t,
-                EventType::PumpFunBuy | EventType::PumpFunSell | EventType::PumpFunBuyExactSolIn
-            )
-        });
-        if has_specific_trade_filter {
-            return event;
-        }
-
-        match event {
-            DexEvent::PumpFunBuy(t)
-            | DexEvent::PumpFunSell(t)
-            | DexEvent::PumpFunBuyExactSolIn(t) => DexEvent::PumpFunTrade(t),
-            other => other,
-        }
+        event
     }
 
     #[inline]
@@ -691,8 +676,20 @@ impl EventTypeFilter {
 }
 
 #[inline]
-fn is_pumpfun_buy_family(event_type: EventType) -> bool {
-    matches!(event_type, EventType::PumpFunBuy | EventType::PumpFunBuyExactSolIn)
+fn pumpfun_trade_filter_is_generic(include_only: &[EventType]) -> bool {
+    include_only.contains(&EventType::PumpFunTrade)
+        && !include_only.iter().any(|t| {
+            matches!(
+                t,
+                EventType::PumpFunBuy | EventType::PumpFunSell | EventType::PumpFunBuyExactSolIn
+            )
+        })
+}
+
+#[inline]
+fn pumpfun_buy_filter_is_generic(include_only: &[EventType]) -> bool {
+    include_only.contains(&EventType::PumpFunBuy)
+        && !include_only.contains(&EventType::PumpFunBuyExactSolIn)
 }
 
 #[inline]
@@ -856,12 +853,16 @@ mod event_type_filter_tests {
         assert!(pump.should_include(EventType::PumpFunBuyExactSolIn));
 
         let pump_specific = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
-        assert!(pump_specific.should_include(EventType::PumpFunTrade));
+        assert!(!pump_specific.should_include(EventType::PumpFunTrade));
+        assert!(pump_specific.should_include(EventType::PumpFunBuy));
+        assert!(!pump_specific.should_include(EventType::PumpFunSell));
         assert!(pump_specific.should_include(EventType::PumpFunBuyExactSolIn));
 
         let pump_exact_buy = EventTypeFilter::include_only(vec![EventType::PumpFunBuyExactSolIn]);
-        assert!(pump_exact_buy.should_include(EventType::PumpFunTrade));
-        assert!(pump_exact_buy.should_include(EventType::PumpFunBuy));
+        assert!(!pump_exact_buy.should_include(EventType::PumpFunTrade));
+        assert!(!pump_exact_buy.should_include(EventType::PumpFunBuy));
+        assert!(!pump_exact_buy.should_include(EventType::PumpFunSell));
+        assert!(pump_exact_buy.should_include(EventType::PumpFunBuyExactSolIn));
 
         let pumpswap = EventTypeFilter::include_only(vec![EventType::PumpSwapTrade]);
         assert!(pumpswap.should_include(EventType::PumpSwapBuy));
@@ -884,6 +885,32 @@ mod event_type_filter_tests {
             EventTypeFilter::include_only(vec![EventType::PumpFunTrade, EventType::PumpFunBuy]);
         let event = DexEvent::PumpFunBuy(PumpFunTradeEvent { is_buy: true, ..Default::default() });
         assert!(matches!(specific_filter.normalize_dex_event(event), DexEvent::PumpFunBuy(_)));
+
+        let buy_filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        let event = DexEvent::PumpFunBuyExactSolIn(PumpFunTradeEvent {
+            is_buy: true,
+            ..Default::default()
+        });
+        assert!(matches!(buy_filter.normalize_dex_event(event), DexEvent::PumpFunBuy(_)));
+
+        let exact_filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuyExactSolIn]);
+        let event = DexEvent::PumpFunBuyExactSolIn(PumpFunTradeEvent {
+            is_buy: true,
+            ..Default::default()
+        });
+        assert!(matches!(
+            exact_filter.normalize_dex_event(event),
+            DexEvent::PumpFunBuyExactSolIn(_)
+        ));
+
+        let create_and_trade_filter =
+            EventTypeFilter::include_only(vec![EventType::PumpFunCreate, EventType::PumpFunTrade]);
+        let event =
+            DexEvent::PumpFunSell(PumpFunTradeEvent { is_buy: false, ..Default::default() });
+        assert!(matches!(
+            create_and_trade_filter.normalize_dex_event(event),
+            DexEvent::PumpFunTrade(_)
+        ));
     }
 
     #[test]

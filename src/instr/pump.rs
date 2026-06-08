@@ -628,6 +628,8 @@ fn parse_create_instruction(
         bonding_curve,
         user,
         creator,
+        quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+        ix_name: "create".to_string(),
         ..Default::default()
     }))
 }
@@ -715,6 +717,8 @@ fn parse_create_v2_instruction(
         program: acc[15],
         is_mayhem_mode,
         is_cashback_enabled,
+        quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+        ix_name: "create_v2".to_string(),
         ..Default::default()
     }))
 }
@@ -861,8 +865,10 @@ mod tests {
                 assert_eq!(c.token_program, acc[7]);
                 assert_eq!(c.mayhem_program_id, acc[9]);
                 assert_eq!(c.program, acc[15]);
+                assert_eq!(c.ix_name, "create_v2");
                 assert!(c.is_mayhem_mode);
                 assert!(c.is_cashback_enabled);
+                assert_eq!(c.quote_mint, PUMPFUN_SOLSCAN_SOL_QUOTE_MINT);
             }
             other => panic!("expected canonical PumpFunCreate, got {other:?}"),
         }

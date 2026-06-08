@@ -489,7 +489,8 @@ fn parse_create_pool_event_optimized(
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
     // 一次性边界检查 (含 IDL 最后一列 is_mayhem_mode: bool)
-    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1 + 1;
+    const CREATE_POOL_EVENT_LEN: usize = 326;
+    const REQUIRED_LEN: usize = CREATE_POOL_EVENT_LEN;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -554,6 +555,7 @@ fn parse_create_pool_event_optimized(
             user_quote_token_account,
             coin_creator,
             is_mayhem_mode,
+            is_cashback_coin: false,
         }))
     }
 }
@@ -891,7 +893,8 @@ pub fn parse_sell_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexE
 /// Parse PumpSwap CreatePool event from pre-decoded data
 #[inline(always)]
 pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
-    const REQUIRED_LEN: usize = 8 + 2 + 32 * 6 + 2 + 8 * 7 + 1;
+    const CREATE_POOL_EVENT_LEN: usize = 326;
+    const REQUIRED_LEN: usize = CREATE_POOL_EVENT_LEN;
     if data.len() < REQUIRED_LEN {
         return None;
     }
@@ -947,6 +950,7 @@ pub fn parse_create_pool_from_data(data: &[u8], metadata: EventMetadata) -> Opti
             user_quote_token_account,
             coin_creator,
             is_mayhem_mode,
+            is_cashback_coin: false,
         }))
     }
 }
@@ -1132,6 +1136,34 @@ mod tests {
         data
     }
 
+    fn build_create_pool_payload(is_mayhem_mode: bool) -> Vec<u8> {
+        let mut data = vec![0u8; 326];
+
+        write_i64(&mut data, 0, 1_713_498_953);
+        data[8..10].copy_from_slice(&42u16.to_le_bytes());
+        write_pubkey(&mut data, 10, Pubkey::new_from_array([1; 32]));
+        write_pubkey(&mut data, 42, Pubkey::new_from_array([2; 32]));
+        write_pubkey(&mut data, 74, Pubkey::new_from_array([3; 32]));
+        data[106] = 6;
+        data[107] = 9;
+        write_u64(&mut data, 108, 11);
+        write_u64(&mut data, 116, 22);
+        write_u64(&mut data, 124, 33);
+        write_u64(&mut data, 132, 44);
+        write_u64(&mut data, 140, 55);
+        write_u64(&mut data, 148, 66);
+        write_u64(&mut data, 156, 77);
+        data[164] = 8;
+        write_pubkey(&mut data, 165, Pubkey::new_from_array([4; 32]));
+        write_pubkey(&mut data, 197, Pubkey::new_from_array([5; 32]));
+        write_pubkey(&mut data, 229, Pubkey::new_from_array([6; 32]));
+        write_pubkey(&mut data, 261, Pubkey::new_from_array([7; 32]));
+        write_pubkey(&mut data, 293, Pubkey::new_from_array([8; 32]));
+        data[325] = u8::from(is_mayhem_mode);
+
+        data
+    }
+
     #[test]
     fn test_discriminator_simd() {
         // 测试 SIMD discriminator 提取
@@ -1189,5 +1221,19 @@ mod tests {
     fn parse_buy_from_data_rejects_truncated_min_base_payload() {
         assert!(parse_buy_from_data(&vec![0u8; 396], metadata()).is_none());
         assert!(parse_buy_from_data(&vec![0u8; 397], metadata()).is_some());
+    }
+
+    #[test]
+    fn parse_create_pool_from_data_reads_mayhem_mode() {
+        let event = parse_create_pool_from_data(&build_create_pool_payload(true), metadata())
+            .expect("expected pumpswap create pool event");
+
+        let DexEvent::PumpSwapCreatePool(event) = event else {
+            panic!("expected PumpSwapCreatePool event");
+        };
+
+        assert_eq!(event.index, 42);
+        assert!(event.is_mayhem_mode);
+        assert!(!event.is_cashback_coin);
     }
 }

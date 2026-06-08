@@ -250,6 +250,11 @@ fn token_program_or_default(token_program: Pubkey) -> Pubkey {
     }
 }
 
+#[inline(always)]
+fn quote_mint_from_shred_v2_account(quote_mint: Option<Pubkey>) -> Pubkey {
+    normalize_pumpfun_quote_mint(quote_mint.unwrap_or_default())
+}
+
 #[inline]
 fn scan_create_mint_from_ix(
     program_id_index: u8,
@@ -425,9 +430,7 @@ fn dispatch_shred_outer(
             created_mints,
             mayhem_mints,
         ) {
-            if filter.map(|f| f.should_include_dex_event(&ev)).unwrap_or(true) {
-                events.push(ev);
-            }
+            push_filtered_shred_event(events, ev, filter);
         }
         return;
     }
@@ -448,7 +451,25 @@ fn dispatch_shred_outer(
         recv_us,
         filter,
     ) {
-        events.push(ev);
+        push_filtered_shred_event(events, ev, filter);
+    }
+}
+
+#[inline]
+fn push_filtered_shred_event(
+    events: &mut Vec<DexEvent>,
+    event: DexEvent,
+    filter: Option<&EventTypeFilter>,
+) -> bool {
+    let Some(filter) = filter else {
+        events.push(event);
+        return true;
+    };
+    if filter.should_include_dex_event(&event) {
+        events.push(filter.normalize_dex_event(event));
+        true
+    } else {
+        false
     }
 }
 
@@ -481,15 +502,14 @@ fn parse_unknown_program_outer(
             recv_us,
             created_mints,
             mayhem_mints,
-        )
-        .filter(|ev| filter.map(|f| f.should_include_dex_event(ev)).unwrap_or(true))
-        {
-            events.push(ev);
-            log::trace!(
-                target: "sol_parser_sdk::shredstream",
-                "unknown-program shred ix parsed as first matching candidate; use a narrow filter to avoid discriminator collisions"
-            );
-            return;
+        ) {
+            if push_filtered_shred_event(events, ev, filter) {
+                log::trace!(
+                    target: "sol_parser_sdk::shredstream",
+                    "unknown-program shred ix parsed as first matching candidate; use a narrow filter to avoid discriminator collisions"
+                );
+                return;
+            }
         }
     }
 
@@ -500,7 +520,7 @@ fn parse_unknown_program_outer(
         if let Some(ev) = parse_non_pump_dex_outer(
             program_id, data, &accounts, signature, slot, tx_index, recv_us, filter,
         ) {
-            events.push(ev);
+            push_filtered_shred_event(events, ev, filter);
             log::trace!(
                 target: "sol_parser_sdk::shredstream",
                 "unknown-program shred ix parsed as first matching candidate; use a narrow filter to avoid discriminator collisions"
@@ -848,6 +868,8 @@ fn parse_create_instruction(
         user,
         creator,
         token_program: get_account(9).unwrap_or_default(),
+        quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+        ix_name: "create".to_string(),
         ..Default::default()
     }))
 }
@@ -936,6 +958,8 @@ fn parse_create_v2_instruction(
         program: get_account(15).unwrap_or_default(),
         is_mayhem_mode,
         is_cashback_enabled,
+        quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+        ix_name: "create_v2".to_string(),
         ..Default::default()
     }))
 }
@@ -1268,7 +1292,7 @@ fn parse_buy_v2_instruction(
     Some(DexEvent::PumpFunBuy(PumpFunTradeEvent {
         metadata,
         mint,
-        quote_mint: normalize_pumpfun_quote_mint(get_account(2).unwrap_or_default()),
+        quote_mint: quote_mint_from_shred_v2_account(get_account(2)),
         global: get_account(0).unwrap_or_default(),
         bonding_curve: get_account(10).unwrap_or_default(),
         associated_bonding_curve: get_account(11).unwrap_or_default(),
@@ -1364,7 +1388,7 @@ fn parse_buy_exact_quote_in_v2_instruction(
     Some(DexEvent::PumpFunBuy(PumpFunTradeEvent {
         metadata,
         mint,
-        quote_mint: normalize_pumpfun_quote_mint(get_account(2).unwrap_or_default()),
+        quote_mint: quote_mint_from_shred_v2_account(get_account(2)),
         global: get_account(0).unwrap_or_default(),
         bonding_curve: get_account(10).unwrap_or_default(),
         associated_bonding_curve: get_account(11).unwrap_or_default(),
@@ -1460,7 +1484,7 @@ fn parse_sell_v2_instruction(
     Some(DexEvent::PumpFunSell(PumpFunTradeEvent {
         metadata,
         mint,
-        quote_mint: normalize_pumpfun_quote_mint(get_account(2).unwrap_or_default()),
+        quote_mint: quote_mint_from_shred_v2_account(get_account(2)),
         global: get_account(0).unwrap_or_default(),
         bonding_curve: get_account(10).unwrap_or_default(),
         associated_bonding_curve: get_account(11).unwrap_or_default(),
@@ -1649,6 +1673,8 @@ mod tests {
                 assert_eq!(event.bonding_curve, Pubkey::default());
                 assert_eq!(event.user, Pubkey::default());
                 assert_eq!(event.token_program, Pubkey::default());
+                assert_eq!(event.quote_mint, PUMPFUN_SOLSCAN_SOL_QUOTE_MINT);
+                assert_eq!(event.ix_name, "create");
             }
             other => panic!("expected PumpFunCreate, got {other:?}"),
         }
@@ -1684,6 +1710,8 @@ mod tests {
                 assert_eq!(event.bonding_curve, bonding_curve);
                 assert_eq!(event.user, user);
                 assert_eq!(event.token_program, token_program);
+                assert_eq!(event.quote_mint, PUMPFUN_SOLSCAN_SOL_QUOTE_MINT);
+                assert_eq!(event.ix_name, "create");
             }
             other => panic!("expected PumpFunCreate, got {other:?}"),
         }
@@ -1739,6 +1767,37 @@ mod tests {
     }
 
     #[test]
+    fn shred_pumpfun_sell_filter_covers_sell_v2() {
+        let static_keys = vec![PROGRAM_ID_PUBKEY; 26];
+        let filter =
+            EventTypeFilter::include_only(vec![crate::grpc::types::EventType::PumpFunSell]);
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&discriminators::SELL_V2);
+        data.extend_from_slice(&100_u64.to_le_bytes());
+        data.extend_from_slice(&200_u64.to_le_bytes());
+        let mut events = Vec::new();
+
+        dispatch_shred_outer(
+            0,
+            &ix_accounts(26),
+            &data,
+            &static_keys,
+            Signature::default(),
+            123,
+            0,
+            456,
+            Some(&filter),
+            &PumpMintSet::new(),
+            &PumpMintSet::new(),
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], DexEvent::PumpFunSell(_)));
+    }
+
+    #[test]
     fn unknown_program_outer_uses_filter_to_parse_matching_protocol() {
         let static_keys = vec![RAYDIUM_CPMM_PROGRAM_ID, Pubkey::new_unique()];
         let ix_accounts = vec![1, 42];
@@ -1763,6 +1822,114 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], DexEvent::RaydiumCpmmSwap(_)));
+    }
+
+    #[test]
+    fn shred_pumpfun_trade_filter_normalizes_specific_variants_to_trade() {
+        let static_keys = vec![PROGRAM_ID_PUBKEY; 27];
+        let mut data = Vec::new();
+        data.extend_from_slice(&discriminators::BUY_V2);
+        data.extend_from_slice(&100_u64.to_le_bytes());
+        data.extend_from_slice(&200_u64.to_le_bytes());
+        let filter =
+            EventTypeFilter::include_only(vec![crate::grpc::types::EventType::PumpFunTrade]);
+        let mut events = Vec::new();
+
+        dispatch_shred_outer(
+            0,
+            &ix_accounts(27),
+            &data,
+            &static_keys,
+            Signature::default(),
+            123,
+            0,
+            456,
+            Some(&filter),
+            &PumpMintSet::new(),
+            &PumpMintSet::new(),
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], DexEvent::PumpFunTrade(_)));
+    }
+
+    #[test]
+    fn shred_pumpfun_buy_filter_normalizes_all_buy_variants_to_buy() {
+        let static_keys = vec![PROGRAM_ID_PUBKEY; 27];
+        let filter = EventTypeFilter::include_only(vec![crate::grpc::types::EventType::PumpFunBuy]);
+
+        let mut buy_data = Vec::new();
+        buy_data.extend_from_slice(&discriminators::BUY_V2);
+        buy_data.extend_from_slice(&100_u64.to_le_bytes());
+        buy_data.extend_from_slice(&200_u64.to_le_bytes());
+        let mut events = Vec::new();
+
+        dispatch_shred_outer(
+            0,
+            &ix_accounts(27),
+            &buy_data,
+            &static_keys,
+            Signature::default(),
+            123,
+            0,
+            456,
+            Some(&filter),
+            &PumpMintSet::new(),
+            &PumpMintSet::new(),
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], DexEvent::PumpFunBuy(_)));
+
+        let mut exact_data = Vec::new();
+        exact_data.extend_from_slice(&discriminators::BUY_EXACT_SOL_IN);
+        exact_data.extend_from_slice(&100_u64.to_le_bytes());
+        exact_data.extend_from_slice(&200_u64.to_le_bytes());
+        events.clear();
+
+        dispatch_shred_outer(
+            0,
+            &ix_accounts(27),
+            &exact_data,
+            &static_keys,
+            Signature::default(),
+            123,
+            0,
+            456,
+            Some(&filter),
+            &PumpMintSet::new(),
+            &PumpMintSet::new(),
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], DexEvent::PumpFunBuy(_)));
+
+        let mut exact_quote_data = Vec::new();
+        exact_quote_data.extend_from_slice(&discriminators::BUY_EXACT_QUOTE_IN_V2);
+        exact_quote_data.extend_from_slice(&100_u64.to_le_bytes());
+        exact_quote_data.extend_from_slice(&200_u64.to_le_bytes());
+        events.clear();
+
+        dispatch_shred_outer(
+            0,
+            &ix_accounts(27),
+            &exact_quote_data,
+            &static_keys,
+            Signature::default(),
+            123,
+            0,
+            456,
+            Some(&filter),
+            &PumpMintSet::new(),
+            &PumpMintSet::new(),
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], DexEvent::PumpFunBuy(_)));
     }
 
     #[test]

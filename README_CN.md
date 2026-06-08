@@ -108,16 +108,45 @@ sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, feature
 
 ```toml
 # 在 Cargo.toml 中添加
-sol-parser-sdk = "0.5.5"
+sol-parser-sdk = "0.5.11"
 ```
 
 或使用零拷贝解析器（最高性能）：
 
 ```toml
-sol-parser-sdk = { version = "0.5.5", default-features = false, features = ["parse-zero-copy"] }
+sol-parser-sdk = { version = "0.5.11", default-features = false, features = ["parse-zero-copy"] }
 ```
 
 ### 发布说明
+
+#### v0.5.11
+
+- 解析 PumpSwap `create_pool` 指令参数，包括 `index`、注入数量、`coin_creator`、`is_mayhem_mode`、`is_cashback_coin`。
+- 修正 PumpSwap `create_pool` 指令账户映射，按 IDL 填充 `pool`、`creator`、`base_mint`、`quote_mint`、LP/用户 token account。
+- instruction 路径的 CreatePool 数据与 log 路径合并时，会保留 `is_cashback_coin`。
+- 明确字段来源：PumpSwap log `CreatePoolEvent` IDL 不包含 `is_cashback_coin`；ShredStream/外层指令解析可从 instruction data 读取该字段，账户订阅可从 `Pool` account 读取权威字段。
+
+#### v0.5.10
+
+- PumpSwap `CreatePoolEvent` 与链上 IDL 对齐：事件暴露 `is_mayhem_mode`，但不暴露 `is_cashback_coin`。
+- PumpSwap `is_cashback_coin` 保留在 `AccountPumpSwapPool` 账户事件中，因为该字段存储在链上 `Pool` account。
+- 修复 PumpSwap CreatePool log payload 长度检查，包含最后的 `is_mayhem_mode` 字节。
+- 文档明确 ShredStream CreatePool 事件无法恢复 `is_cashback_coin`，因为 Shred entry 不包含账户 body。
+
+#### v0.5.9
+
+- 实现真正的 Yellowstone gRPC `stop()`：会通知、abort 并等待当前订阅任务结束。
+- 串行化 gRPC 订阅生命周期，避免并发 stop / re-subscribe 遗留旧的重连循环。
+- 每次订阅使用独立 stop signal，避免新订阅误重置旧任务的停止状态。
+- 流错误日志改为 `Grpc Stream error`，便于和 ShredStream 日志区分。
+- 修复 warmup 测试对全局测试执行顺序的依赖。
+
+#### v0.5.8
+
+- ShredStream 示例增加可配置事件过滤 preset，包括 Pump.fun trade、create-trade、buy、sell、buy-exact-sol-in。
+- 明确 Pump.fun `ix_name` 使用 IDL 原始 instruction name：`buy`、`buy_v2`、`buy_exact_sol_in`、`buy_exact_quote_in_v2`、`sell`、`sell_v2`。
+- Pump.fun 过滤大类与 IDL 语义保持一致：`PumpFunBuy` 覆盖所有 buy 指令，`PumpFunSell` 覆盖所有 sell 指令，`PumpFunTrade` 覆盖所有 buy 和 sell 指令。
+- 只订阅 `PumpFunTrade` 时，ShredStream 热路径统一输出 `DexEvent::PumpFunTrade`。
 
 #### v0.5.5
 
@@ -463,6 +492,7 @@ let event_filter = EventTypeFilter::include_only(vec![
     EventType::PumpFunCreate,
     EventType::PumpFeesUpdateFeeShares,
     EventType::PumpSwapCreatePool,
+    EventType::AccountPumpSwapPool,
     EventType::RaydiumCpmmInitialize,
     EventType::RaydiumClmmCreatePool,
     EventType::OrcaWhirlpoolPoolInitialized,
@@ -471,6 +501,12 @@ let event_filter = EventTypeFilter::include_only(vec![
     EventType::MeteoraDlmmInitializePool,
 ]);
 ```
+
+`PumpSwapCreatePool` 包含 `is_mayhem_mode`。对于 `is_cashback_coin`，
+ShredStream/外层指令解析会从 `create_pool` instruction args 读取；
+log-only 的 `CreatePoolEvent` payload 因为 IDL 不包含该字段，会保持默认
+`false`。账户里的权威值也可通过
+`PumpSwapPoolAccountEvent.pool.is_cashback_coin` 读取。
 
 **性能影响：**
 - 减少 60-80% 的处理开销
