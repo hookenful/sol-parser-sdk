@@ -41,6 +41,40 @@ fn find_instruction_invoke<'a>(
     })
 }
 
+fn instruction_has_discriminator(
+    transaction: &Option<Transaction>,
+    outer_idx: i32,
+    discriminator: [u8; 8],
+) -> bool {
+    if outer_idx < 0 {
+        return false;
+    }
+    transaction
+        .as_ref()
+        .and_then(|tx| tx.message.as_ref())
+        .and_then(|msg| msg.instructions.get(outer_idx as usize))
+        .and_then(|ix| ix.data.get(..8))
+        .is_some_and(|disc| disc == discriminator)
+}
+
+fn find_pumpfun_create_invoke<'a>(
+    invokes: &'a [(i32, i32)],
+    transaction: &Option<Transaction>,
+    ix_name: &str,
+) -> Option<&'a (i32, i32)> {
+    let discriminator = if ix_name == "create_v2" {
+        crate::instr::pump::discriminators::CREATE_V2
+    } else {
+        crate::instr::pump::discriminators::CREATE
+    };
+    invokes
+        .iter()
+        .find(|(outer_idx, inner_idx)| {
+            *inner_idx < 0 && instruction_has_discriminator(transaction, *outer_idx, discriminator)
+        })
+        .or_else(|| invokes.iter().find(|(_, inner_idx)| *inner_idx < 0))
+}
+
 /// 通用填充辅助宏
 macro_rules! fill_event_accounts {
     ($event:expr, $meta:expr, $tx:expr, $invokes:expr, $program_id:expr, $filler:expr) => {
@@ -61,6 +95,23 @@ macro_rules! fill_event_accounts {
             }
         }
     };
+}
+
+macro_rules! fill_event_accounts_with_invoke {
+    ($event:expr, $meta:expr, $tx:expr, $invoke:expr, $filler:expr) => {{
+        let account_keys =
+            $tx.as_ref().and_then(|tx| tx.message.as_ref()).map(|msg| &msg.account_keys);
+        if let Some(get_account) = get_instruction_account_getter(
+            $meta,
+            $tx,
+            account_keys,
+            &$meta.loaded_writable_addresses,
+            &$meta.loaded_readonly_addresses,
+            $invoke,
+        ) {
+            $filler(&get_account);
+        }
+    }};
 }
 
 // ============================================================================
@@ -94,16 +145,23 @@ pub fn fill_accounts_with_owned_keys(
             );
         }
         DexEvent::PumpFunCreate(e) => {
-            fill_event_accounts!(
-                e,
-                meta,
-                transaction,
-                program_invokes,
-                &PUMPFUN_PROGRAM,
-                |get: &AccountGetter<'_>| {
-                    account_fillers::pumpfun::fill_create_accounts(e, get);
+            if let Some(invokes) = program_invokes.get(&PUMPFUN_PROGRAM) {
+                if let Some(invoke) = find_pumpfun_create_invoke(invokes, transaction, &e.ix_name) {
+                    fill_event_accounts_with_invoke!(
+                        e,
+                        meta,
+                        transaction,
+                        invoke,
+                        |get: &AccountGetter<'_>| {
+                            if e.ix_name == "create_v2" {
+                                account_fillers::pumpfun::fill_create_accounts_from_v2(e, get);
+                            } else {
+                                account_fillers::pumpfun::fill_create_accounts(e, get);
+                            }
+                        }
+                    );
                 }
-            );
+            }
         }
         DexEvent::PumpFunCreateV2(e) => {
             fill_event_accounts!(

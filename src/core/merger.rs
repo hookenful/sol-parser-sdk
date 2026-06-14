@@ -353,6 +353,8 @@ fn merge_pumpfun_create(base: &mut PumpFunCreateTokenEvent, inner: PumpFunCreate
     base.is_mayhem_mode = inner.is_mayhem_mode;
     base.is_cashback_enabled = inner.is_cashback_enabled;
     put_pumpfun_quote_mint_if_set(&mut base.quote_mint, inner.quote_mint);
+    put_pk_if_set(&mut base.quote_vault, inner.quote_vault);
+    put_pk_if_set(&mut base.quote_token_program, inner.quote_token_program);
     put_u64_if_nonzero(&mut base.virtual_quote_reserves, inner.virtual_quote_reserves);
 }
 
@@ -375,6 +377,8 @@ fn merge_pumpfun_create_v2(base: &mut PumpFunCreateV2TokenEvent, inner: PumpFunC
     base.is_mayhem_mode |= inner.is_mayhem_mode;
     base.is_cashback_enabled |= inner.is_cashback_enabled;
     put_pumpfun_quote_mint_if_set(&mut base.quote_mint, inner.quote_mint);
+    put_pk_if_set(&mut base.quote_vault, inner.quote_vault);
+    put_pk_if_set(&mut base.quote_token_program, inner.quote_token_program);
     put_u64_if_nonzero(&mut base.virtual_quote_reserves, inner.virtual_quote_reserves);
     put_pk_if_set(&mut base.mint_authority, inner.mint_authority);
     put_pk_if_set(&mut base.associated_bonding_curve, inner.associated_bonding_curve);
@@ -557,6 +561,8 @@ fn merge_pumpfun_create_log_preferred(
     fill_pk(&mut log.creator, ix.creator);
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
@@ -586,6 +592,8 @@ fn merge_pumpfun_create_v2_into_create_log_preferred(
     put_u64_if_nonzero(&mut log.token_total_supply, ix.token_total_supply);
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
@@ -615,6 +623,8 @@ fn merge_pumpfun_create_into_create_v2_log_preferred(
     put_u64_if_nonzero(&mut log.token_total_supply, ix.token_total_supply);
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
@@ -636,6 +646,8 @@ fn merge_pumpfun_create_v2_log_preferred(
     fill_pk(&mut log.creator, ix.creator);
     fill_pk(&mut log.token_program, ix.token_program);
     fill_pumpfun_quote_mint(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
@@ -1046,6 +1058,27 @@ mod tests {
 
         if let DexEvent::PumpFunTrade(t) = base {
             assert_eq!(t.quote_mint, quote_mint);
+        } else {
+            panic!("Expected PumpFunTrade event");
+        }
+    }
+
+    #[test]
+    fn merge_replaces_sol_quote_sentinel_with_wsol_mint() {
+        let mut base = DexEvent::PumpFunTrade(PumpFunTradeEvent {
+            quote_mint: PUMPFUN_SOLSCAN_SOL_QUOTE_MINT,
+            ..Default::default()
+        });
+
+        let inner = DexEvent::PumpFunBuy(PumpFunTradeEvent {
+            quote_mint: PUMPFUN_WSOL_QUOTE_MINT,
+            ..Default::default()
+        });
+
+        merge_events(&mut base, inner);
+
+        if let DexEvent::PumpFunTrade(t) = base {
+            assert_eq!(t.quote_mint, PUMPFUN_WSOL_QUOTE_MINT);
         } else {
             panic!("Expected PumpFunTrade event");
         }

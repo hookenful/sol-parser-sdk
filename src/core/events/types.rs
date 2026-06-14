@@ -15,13 +15,12 @@ use solana_sdk::{pubkey, pubkey::Pubkey, signature::Signature};
 pub const PUMPFUN_SOLSCAN_SOL_QUOTE_MINT: Pubkey =
     pubkey!("So11111111111111111111111111111111111111111");
 
-/// SPL wrapped-SOL mint. Pump CreateV2 may expose this as a SOL quote sentinel, but it still
-/// represents native SOL semantics unless a consumer explicitly chooses WSOL settlement.
+/// SPL wrapped-SOL mint.
 pub const PUMPFUN_WSOL_QUOTE_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 
 #[inline]
 pub fn normalize_pumpfun_quote_mint(quote_mint: Pubkey) -> Pubkey {
-    if quote_mint == Pubkey::default() || quote_mint == PUMPFUN_WSOL_QUOTE_MINT {
+    if quote_mint == Pubkey::default() {
         PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
     } else {
         quote_mint
@@ -59,12 +58,9 @@ mod tests {
     }
 
     #[test]
-    fn pumpfun_wsol_quote_mint_uses_solscan_sol_sentinel() {
-        assert_eq!(
-            normalize_pumpfun_quote_mint(PUMPFUN_WSOL_QUOTE_MINT),
-            PUMPFUN_SOLSCAN_SOL_QUOTE_MINT
-        );
-        assert!(is_pumpfun_solscan_sol_quote_mint(PUMPFUN_WSOL_QUOTE_MINT));
+    fn pumpfun_wsol_quote_mint_is_preserved() {
+        assert_eq!(normalize_pumpfun_quote_mint(PUMPFUN_WSOL_QUOTE_MINT), PUMPFUN_WSOL_QUOTE_MINT);
+        assert!(!is_pumpfun_solscan_sol_quote_mint(PUMPFUN_WSOL_QUOTE_MINT));
     }
 }
 
@@ -460,6 +456,12 @@ pub struct PumpFunCreateTokenEvent {
     pub is_cashback_enabled: bool,
     /// Quote mint for v2 quote pools (for example USDC).
     pub quote_mint: Pubkey,
+    /// Quote-side vault account appended by PumpFun `create_v2` quote pools.
+    #[borsh(skip)]
+    pub quote_vault: Pubkey,
+    /// Quote-side token program appended by PumpFun `create_v2` quote pools.
+    #[borsh(skip)]
+    pub quote_token_program: Pubkey,
     /// Initial virtual quote reserves. For SOL pools this is the SOL-side reserve;
     /// for USDC pools this is the USDC-side reserve.
     pub virtual_quote_reserves: u64,
@@ -518,6 +520,10 @@ pub struct PumpFunCreateV2TokenEvent {
     pub is_cashback_enabled: bool,
     #[borsh(skip)]
     pub quote_mint: Pubkey,
+    #[borsh(skip)]
+    pub quote_vault: Pubkey,
+    #[borsh(skip)]
+    pub quote_token_program: Pubkey,
     #[borsh(skip)]
     pub virtual_quote_reserves: u64,
     /// Original PumpFun instruction name: `"create"` or `"create_v2"`.
