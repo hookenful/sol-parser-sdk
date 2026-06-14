@@ -21,6 +21,8 @@ pub mod discriminators {
     pub const BUY_EXACT_SOL_IN: [u8; 8] = [56, 252, 116, 8, 158, 223, 205, 95];
     /// Migrate event log discriminator (CPI)
     pub const MIGRATE_EVENT_LOG: [u8; 8] = [189, 233, 93, 185, 92, 148, 234, 148];
+    /// Migrate instruction discriminator (global:migrate)
+    pub const MIGRATE: [u8; 8] = [155, 234, 231, 146, 236, 158, 162, 30];
     /// `migrate_bonding_curve_creator` 外层 ix（`idls/pumpfun.json`）
     pub const MIGRATE_BONDING_CURVE_CREATOR: [u8; 8] = [87, 124, 52, 191, 52, 38, 214, 232];
     /// buy_v2: unified buy with quote_mint support (SOL + USDC)
@@ -169,6 +171,16 @@ pub fn parse_instruction(
             block_time_us,
             grpc_recv_us,
             "sell_v2",
+        );
+    }
+    if outer_disc == discriminators::MIGRATE {
+        return parse_migrate_instruction(
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
         );
     }
 
@@ -734,6 +746,36 @@ fn parse_create_v2_instruction(
     }))
 }
 
+/// Parse migrate instruction (global:migrate).
+fn parse_migrate_instruction(
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    if accounts.len() < 10 {
+        return None;
+    }
+
+    let block_time_us = block_time_us.unwrap_or_default();
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us, grpc_recv_us);
+    let timestamp = block_time_us.saturating_div(1_000_000);
+
+    Some(DexEvent::PumpFunMigrate(PumpFunMigrateEvent {
+        metadata,
+        user: accounts[5],
+        mint: accounts[2],
+        mint_amount: 0,
+        sol_amount: 0,
+        pool_migration_fee: 0,
+        bonding_curve: accounts[3],
+        timestamp,
+        pool: accounts[9],
+    }))
+}
+
 /// Parse Migrate CPI instruction
 #[allow(unused_variables)]
 fn parse_migrate_log_instruction(
@@ -1065,6 +1107,37 @@ mod tests {
                 assert_eq!(t.quote_mint, acc[2]);
             }
             other => panic!("expected PumpFunBuy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pumpfun_outer_migrate_instruction_emits_migrate_event() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&discriminators::MIGRATE);
+        let acc = accounts(10);
+
+        let event = parse_instruction(
+            &data,
+            &acc,
+            Signature::default(),
+            123,
+            7,
+            Some(1_700_000_000_000_000),
+            99,
+        )
+        .expect("event");
+
+        match event {
+            DexEvent::PumpFunMigrate(migrate) => {
+                assert_eq!(migrate.metadata.slot, 123);
+                assert_eq!(migrate.metadata.tx_index, 7);
+                assert_eq!(migrate.user, acc[5]);
+                assert_eq!(migrate.mint, acc[2]);
+                assert_eq!(migrate.bonding_curve, acc[3]);
+                assert_eq!(migrate.pool, acc[9]);
+                assert_eq!(migrate.timestamp, 1_700_000_000);
+            }
+            other => panic!("expected PumpFunMigrate, got {other:?}"),
         }
     }
 }

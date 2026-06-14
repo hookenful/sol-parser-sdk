@@ -11,6 +11,7 @@
 pub mod buffers;
 pub mod client;
 pub mod config;
+pub mod deduper;
 pub mod event_parser;
 pub mod filter;
 pub mod geyser_connect;
@@ -24,6 +25,8 @@ pub mod yellowstone_tx_parse;
 
 // 重新导出主要API
 pub use client::YellowstoneGrpc;
+pub type YellowstoneGrpcClient = YellowstoneGrpc;
+pub use deduper::TxDeduper;
 pub use geyser_connect::{connect_yellowstone_geyser, GeyserConnectConfig};
 pub use subscribe_builder::{
     build_subscribe_request, build_subscribe_request_with_commitment,
@@ -35,8 +38,9 @@ pub use transaction_meta::{
     spl_token_counterparty_by_owner, token_balance_raw_amount, try_yellowstone_signature,
 };
 pub use types::{
-    account_filter_memcmp, AccountFilter, ClientConfig, EventType as StreamingEventType,
-    EventTypeFilter, OrderMode, Protocol, SlotFilter, TransactionFilter,
+    account_filter_memcmp, AccountFilter, ClientConfig, CommitmentMode,
+    EventType as StreamingEventType, EventTypeFilter, OrderMode, Protocol, SlotFilter,
+    TransactionFilter,
 };
 pub use yellowstone_tx_parse::{
     parse_subscribe_update_transaction, parse_subscribe_update_transaction_low_latency,
