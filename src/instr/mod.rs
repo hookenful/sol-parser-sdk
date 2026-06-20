@@ -142,8 +142,14 @@ pub fn parse_instruction_unified(
     }
     // RaydiumLaunchlab / Raydium LaunchLab
     else if *program_id == RAYDIUM_LAUNCHLAB_PROGRAM_ID {
-        if event_type_filter.is_some() && !event_type_filter.unwrap().includes_raydium_launchlab() {
-            return None;
+        if let Some(filter) = event_type_filter {
+            if !filter.includes_raydium_launchlab()
+                && !filter.should_include(
+                    crate::grpc::types::EventType::AccountRaydiumLaunchlabPlatformConfig,
+                )
+            {
+                return None;
+            }
         }
         return filter_parsed_event(
             parse_raydium_launchlab_instruction(

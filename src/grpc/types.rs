@@ -583,7 +583,6 @@ impl EventTypeFilter {
             EventType::RaydiumLaunchlabTrade,
             EventType::RaydiumLaunchlabPoolCreate,
             EventType::RaydiumLaunchlabMigrateAmm,
-            EventType::AccountRaydiumLaunchlabPlatformConfig,
         ])
     }
 
