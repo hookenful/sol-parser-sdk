@@ -393,6 +393,7 @@ pub enum EventType {
     AccountRaydiumClmmTickArrayState,
     AccountRaydiumCpmmAmmConfig,
     AccountRaydiumCpmmPoolState,
+    AccountRaydiumLaunchlabPlatformConfig,
     AccountOrcaWhirlpool,
     AccountOrcaPosition,
     AccountOrcaTickArray,
@@ -582,6 +583,7 @@ impl EventTypeFilter {
             EventType::RaydiumLaunchlabTrade,
             EventType::RaydiumLaunchlabPoolCreate,
             EventType::RaydiumLaunchlabMigrateAmm,
+            EventType::AccountRaydiumLaunchlabPlatformConfig,
         ])
     }
 
@@ -756,6 +758,9 @@ pub fn event_type_from_dex_event(event: &crate::core::events::DexEvent) -> Optio
         DexEvent::RaydiumLaunchlabTrade(_) => Some(EventType::RaydiumLaunchlabTrade),
         DexEvent::RaydiumLaunchlabPoolCreate(_) => Some(EventType::RaydiumLaunchlabPoolCreate),
         DexEvent::RaydiumLaunchlabMigrateAmm(_) => Some(EventType::RaydiumLaunchlabMigrateAmm),
+        DexEvent::RaydiumLaunchlabPlatformConfigAccount(_) => {
+            Some(EventType::AccountRaydiumLaunchlabPlatformConfig)
+        }
         DexEvent::RaydiumClmmSwap(_) => Some(EventType::RaydiumClmmSwap),
         DexEvent::RaydiumClmmCreatePool(_) => Some(EventType::RaydiumClmmCreatePool),
         DexEvent::RaydiumClmmOpenPosition(_) => Some(EventType::RaydiumClmmOpenPosition),
