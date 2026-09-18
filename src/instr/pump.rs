@@ -23,6 +23,8 @@ pub mod discriminators {
     pub const MIGRATE_EVENT_LOG: [u8; 8] = [189, 233, 93, 185, 92, 148, 234, 148];
     /// Migrate instruction discriminator (global:migrate)
     pub const MIGRATE: [u8; 8] = [155, 234, 231, 146, 236, 158, 162, 30];
+    /// MigrateV2 instruction discriminator.
+    pub const MIGRATE_V2: [u8; 8] = [187, 203, 18, 31, 206, 237, 254, 41];
     /// `migrate_bonding_curve_creator` 外层 ix（`idls/pumpfun.json`）
     pub const MIGRATE_BONDING_CURVE_CREATOR: [u8; 8] = [87, 124, 52, 191, 52, 38, 214, 232];
     /// buy_v2: unified buy with quote_mint support (SOL + USDC)
@@ -175,6 +177,16 @@ pub fn parse_instruction(
     }
     if outer_disc == discriminators::MIGRATE {
         return parse_migrate_instruction(
+            accounts,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        );
+    }
+    if outer_disc == discriminators::MIGRATE_V2 {
+        return parse_migrate_v2_instruction(
             accounts,
             signature,
             slot,
@@ -776,6 +788,41 @@ fn parse_migrate_instruction(
     }))
 }
 
+/// Parse migrate_v2 instruction.
+///
+/// The outer instruction carries account context only; exact amounts/fees are
+/// emitted in the corresponding MigrateEvent log/CPI event. Keep this as a
+/// loss-tolerant fallback so consumers can still switch migrated positions to
+/// the PAMM pool when logs/CPI events are unavailable.
+fn parse_migrate_v2_instruction(
+    accounts: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    if accounts.len() < 11 {
+        return None;
+    }
+
+    let block_time_us = block_time_us.unwrap_or_default();
+    let metadata = create_metadata(signature, slot, tx_index, block_time_us, grpc_recv_us);
+    let timestamp = block_time_us.saturating_div(1_000_000);
+
+    Some(DexEvent::PumpFunMigrate(PumpFunMigrateEvent {
+        metadata,
+        user: accounts[7],
+        mint: accounts[2],
+        mint_amount: 0,
+        sol_amount: 0,
+        pool_migration_fee: 0,
+        bonding_curve: accounts[4],
+        timestamp,
+        pool: accounts[10],
+    }))
+}
+
 /// Parse Migrate CPI instruction
 #[allow(unused_variables)]
 fn parse_migrate_log_instruction(
@@ -1135,6 +1182,40 @@ mod tests {
                 assert_eq!(migrate.mint, acc[2]);
                 assert_eq!(migrate.bonding_curve, acc[3]);
                 assert_eq!(migrate.pool, acc[9]);
+                assert_eq!(migrate.timestamp, 1_700_000_000);
+            }
+            other => panic!("expected PumpFunMigrate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pumpfun_migrate_v2_instruction_exposes_pool_context() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&discriminators::MIGRATE_V2);
+        let acc = accounts(27);
+
+        let event = parse_instruction(
+            &data,
+            &acc,
+            Signature::default(),
+            123,
+            7,
+            Some(1_700_000_000_000_000),
+            99,
+        )
+        .expect("event");
+
+        match event {
+            DexEvent::PumpFunMigrate(migrate) => {
+                assert_eq!(migrate.metadata.slot, 123);
+                assert_eq!(migrate.metadata.tx_index, 7);
+                assert_eq!(migrate.user, acc[7]);
+                assert_eq!(migrate.mint, acc[2]);
+                assert_eq!(migrate.bonding_curve, acc[4]);
+                assert_eq!(migrate.pool, acc[10]);
+                assert_eq!(migrate.mint_amount, 0);
+                assert_eq!(migrate.sol_amount, 0);
+                assert_eq!(migrate.pool_migration_fee, 0);
                 assert_eq!(migrate.timestamp, 1_700_000_000);
             }
             other => panic!("expected PumpFunMigrate, got {other:?}"),
