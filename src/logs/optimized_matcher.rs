@@ -482,6 +482,14 @@ fn filter_allows_discriminator(
     };
 
     if let Some(program_id) = program_id {
+        if *program_id == program_ids::PUMPFUN_PROGRAM_ID
+            && discriminator == discriminators::PUMPFUN_TRADE
+        {
+            return filter.should_include(EventType::PumpFunTrade)
+                || filter.should_include(EventType::PumpFunBuy)
+                || filter.should_include(EventType::PumpFunSell)
+                || filter.should_include(EventType::PumpFunBuyExactSolIn);
+        }
         if let Some(event_type) =
             program_scoped_discriminator_to_event_type(program_id, discriminator)
         {
@@ -1060,7 +1068,17 @@ fn parse_program_scoped_event(
     is_created_buy: bool,
 ) -> Option<DexEvent> {
     if let Some(filter) = event_type_filter {
-        if let Some(event_type) =
+        if *program_id == program_ids::PUMPFUN_PROGRAM_ID
+            && discriminator == discriminators::PUMPFUN_TRADE
+        {
+            if !filter.should_include(EventType::PumpFunTrade)
+                && !filter.should_include(EventType::PumpFunBuy)
+                && !filter.should_include(EventType::PumpFunSell)
+                && !filter.should_include(EventType::PumpFunBuyExactSolIn)
+            {
+                return None;
+            }
+        } else if let Some(event_type) =
             program_scoped_discriminator_to_event_type(program_id, discriminator)
         {
             if !filter.should_include(event_type) {
@@ -1826,6 +1844,20 @@ mod tests {
             Some(&raydium_launchlab_filter),
         ));
 
+        let pumpfun_buy_filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        assert!(filter_allows_discriminator(
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+            discriminators::PUMPFUN_TRADE,
+            Some(&pumpfun_buy_filter),
+        ));
+
+        let pumpfun_migrate_filter = EventTypeFilter::include_only(vec![EventType::PumpFunMigrate]);
+        assert!(filter_allows_discriminator(
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+            discriminators::PUMPFUN_MIGRATE,
+            Some(&pumpfun_migrate_filter),
+        ));
+
         let dbc_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDbcSwap]);
         assert!(filter_allows_discriminator(
             Some(&program_ids::METEORA_DBC_PROGRAM_ID),
@@ -1842,6 +1874,75 @@ mod tests {
             discriminators::METEORA_DLMM_CLOSE_POSITION,
             Some(&raydium_launchlab_filter),
         ));
+    }
+
+    #[test]
+    fn program_scoped_pumpfun_buy_filter_parses_trade_log_variant() {
+        let log = "Program data: vdt/007mYe5StuUGXKtQJzSLsEK5h79gIdGUQz7vyn59ApMQyeYlr3cK4wUAAAAA7dnMPhkDAAAB5uPeR/hOJigYiGhz2PiTzeNML3vtbrwijyhrJHoTgitivC1qAAAAALjcux8HAAAAt2E0T9e8AwC4MJgjAAAAALfJIQNGvgIA4ATIfOuY+lzkf4A4Bv0seUXSlSSVmuwA3tl4FPOPeEZfAAAAAAAAACBRDgAAAAAAbf5L76S20PsQ+d4EfYrWKDprZOVyf9lJPbA04mYiiiweAAAAAAAAAGmFBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAGJ1eQAAAAAAAAAAAAAAAAAAAAAAiBMAAAAAAACQKAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHcK4wUAAAAAuNy7HwcAAAC4MJgjAAAAAA==";
+        let filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        let event = parse_log_optimized_with_program_id(
+            log,
+            Signature::default(),
+            426270756,
+            268,
+            Some(1781382243600841),
+            1781382243601307,
+            Some(&filter),
+            false,
+            None,
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+        )
+        .expect("PumpFun TradeEvent log should parse under PumpFunBuy filter");
+
+        match event {
+            DexEvent::PumpFunBuy(trade) => {
+                assert_eq!(trade.ix_name, "buy");
+                assert_eq!(trade.sol_amount, 98_765_431);
+                assert_eq!(trade.token_amount, 3_406_962_678_253);
+                assert_eq!(trade.virtual_sol_reserves, 30_597_176_504);
+                assert_eq!(trade.virtual_token_reserves, 1_052_057_862_955_447);
+                assert_eq!(trade.real_sol_reserves, 597_176_504);
+                assert_eq!(trade.real_token_reserves, 772_157_862_955_447);
+            }
+            other => panic!("expected PumpFunBuy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn program_scoped_pumpfun_migrate_filter_parses_migrate_log() {
+        let log = "Program data: velduVyU6pR5syl9Y/fz65admv7nJIovNlWDCH2Y954qauspuQDisk1l6YMA+34A5o/SVquvh/6xjFizMiimOwgPjzV7L68PAAgBqSy8AAAY/NHJEwAAAMHh5AAAAAAA3mghPIiv7AcyiqrQydcbux7+Eev4z+N+oOGN3mzeI8NdCjBqAAAAAKO0nBI1copRoR5QGippzsvGx1T9DotaTJIHQfc3Vj6zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let filter = EventTypeFilter::include_only(vec![EventType::PumpFunMigrate]);
+        let event = parse_log_optimized_with_program_id(
+            log,
+            Signature::default(),
+            426651252,
+            0,
+            None,
+            0,
+            Some(&filter),
+            false,
+            None,
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+        )
+        .expect("PumpFun MigrateEvent log should parse under PumpFunMigrate filter");
+
+        match event {
+            DexEvent::PumpFunMigrate(migrate) => {
+                assert_eq!(
+                    migrate.mint.to_string(),
+                    "6D8XQvpWcPiMeXdvjYbquy5ei331gWnM5fQjpqkopump"
+                );
+                assert_eq!(
+                    migrate.bonding_curve.to_string(),
+                    "FyBbuddurWTC314jMuBkquv1RBeViHko2Pu1Ne7FZTMt"
+                );
+                assert_eq!(
+                    migrate.pool.to_string(),
+                    "C23BqVKDN68Bx6TnuKBMVsKQgcso1QNHcXyviQFBm5WJ"
+                );
+            }
+            other => panic!("expected PumpFunMigrate, got {other:?}"),
+        }
     }
 
     #[test]
