@@ -49,6 +49,10 @@ pub enum DexEvent {
     MeteoraDammV2AddLiquidity(MeteoraDammV2AddLiquidityEvent), // - 已对接
     MeteoraDammV2RemoveLiquidity(MeteoraDammV2RemoveLiquidityEvent), // - 已对接
     MeteoraDammV2InitializePool(MeteoraDammV2InitializePoolEvent), // - 已对接
+    MeteoraDammV2UpdateDelegatePermission(MeteoraDammV2UpdateDelegatePermissionEvent),
+    MeteoraDammV2WithdrawDeadLiquidityReward(MeteoraDammV2WithdrawDeadLiquidityRewardEvent),
+    MeteoraDammV2CreateConfig(MeteoraDammV2CreateConfigEvent),
+    MeteoraDammV2CreateDynamicConfig(MeteoraDammV2CreateDynamicConfigEvent),
 
     // Meteora DBC 事件
     MeteoraDbcSwap(MeteoraDbcSwapEvent),
@@ -195,6 +199,10 @@ impl DexEvent {
             DexEvent::MeteoraDammV2AddLiquidity(e) => &e.metadata,
             DexEvent::MeteoraDammV2RemoveLiquidity(e) => &e.metadata,
             DexEvent::MeteoraDammV2InitializePool(e) => &e.metadata,
+            DexEvent::MeteoraDammV2UpdateDelegatePermission(e) => &e.metadata,
+            DexEvent::MeteoraDammV2WithdrawDeadLiquidityReward(e) => &e.metadata,
+            DexEvent::MeteoraDammV2CreateConfig(e) => &e.metadata,
+            DexEvent::MeteoraDammV2CreateDynamicConfig(e) => &e.metadata,
             DexEvent::MeteoraDbcSwap(e) => &e.metadata,
             DexEvent::MeteoraDbcInitializePool(e) => &e.metadata,
             DexEvent::MeteoraDbcCurveComplete(e) => &e.metadata,
@@ -324,6 +332,10 @@ impl DexEvent {
             DexEvent::MeteoraDammV2AddLiquidity(e) => Some(&mut e.metadata),
             DexEvent::MeteoraDammV2RemoveLiquidity(e) => Some(&mut e.metadata),
             DexEvent::MeteoraDammV2InitializePool(e) => Some(&mut e.metadata),
+            DexEvent::MeteoraDammV2UpdateDelegatePermission(e) => Some(&mut e.metadata),
+            DexEvent::MeteoraDammV2WithdrawDeadLiquidityReward(e) => Some(&mut e.metadata),
+            DexEvent::MeteoraDammV2CreateConfig(e) => Some(&mut e.metadata),
+            DexEvent::MeteoraDammV2CreateDynamicConfig(e) => Some(&mut e.metadata),
             DexEvent::MeteoraDbcSwap(e) => Some(&mut e.metadata),
             DexEvent::MeteoraDbcInitializePool(e) => Some(&mut e.metadata),
             DexEvent::MeteoraDbcCurveComplete(e) => Some(&mut e.metadata),

@@ -34,12 +34,6 @@
     <a href="https://discord.gg/vuazbGkqQE">Discord</a>
 </p>
 
-> ☕ **Support This Project**
->
-> This SDK is completely free and open source. However, maintaining and continuously updating it requires significant AI computing resources and token consumption. If this SDK helps with your development, consider making a monthly SOL donation — any amount is appreciated and helps keep this project alive!
->
-> **Donation Wallet:** `6oW7AXz1yRb57pYSxysuXnMs2aR1ha5rzGzReZ1MjPV8`
-
 ---
 
 ## 📦 SDK Versions
@@ -52,6 +46,17 @@ This SDK is available in multiple languages:
 | **Node.js** | [sol-parser-sdk-nodejs](https://github.com/0xfnzero/sol-parser-sdk-nodejs) | TypeScript/JavaScript for Node.js |
 | **Python** | [sol-parser-sdk-python](https://github.com/0xfnzero/sol-parser-sdk-python) | Async/await native support |
 | **Go** | [sol-parser-sdk-golang](https://github.com/0xfnzero/sol-parser-sdk-golang) | Concurrent-safe with goroutine support |
+
+## What This SDK Is For
+
+`sol-parser-sdk` is the low-level Rust parser core for Solana DEX events. It is designed for trading bots, copy-trading pipelines, sniper bots, indexers, and stream processors that need fast, typed parsing from Yellowstone gRPC transactions, Jito ShredStream entries, RPC transaction payloads, or account subscriptions.
+
+| Area | Coverage |
+|------|----------|
+| Parser inputs | Yellowstone gRPC, ShredStream, RPC transactions, encoded transactions, protocol account data |
+| DEX protocols | PumpFun, PumpSwap, Pump Fees, LaunchLab (including StonkFun), Raydium CPMM, Raydium CLMM, Raydium AMM V4, Meteora DAMM v2, Meteora DLMM, Meteora DBC, Orca Whirlpool |
+| Parser backends | Default Borsh parser for maintainability, optional zero-copy parser for latency-sensitive hot paths |
+| Related SDK | Use [solana-streamer](https://github.com/0xfnzero/solana-streamer) when you want a higher-level streaming facade over this parser core |
 
 ---
 
@@ -108,16 +113,105 @@ sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, feature
 
 ```toml
 # Add to your Cargo.toml
-sol-parser-sdk = "0.5.15"
+sol-parser-sdk = "0.7.5"
 ```
 
 Or with the zero-copy parser (maximum performance):
 
 ```toml
-sol-parser-sdk = { version = "0.5.15", default-features = false, features = ["parse-zero-copy"] }
+sol-parser-sdk = { version = "0.7.5", default-features = false, features = ["parse-zero-copy"] }
 ```
 
 ### Release Notes
+
+#### v0.7.5
+
+- Backfills Meteora DAMM v2 swap/swap2 mint, vault, payer, token-program, and remaining instruction accounts from the matching pool's real swap instruction, including optional referral handling.
+- Avoids assigning accounts from a different pool or from ambiguous repeated swaps in the same pool.
+- Verifies both transactions reported in solana-streamer issue #82 with live mainnet RPC regressions for the default and zero-copy parsers.
+
+#### v0.7.4
+
+- Adds `Protocol::StonkFun` and `Protocol::LaunchLab` as the preferred subscription names; the old `Protocol::RaydiumLaunchlab` remains compatible.
+- Identifies StonkFun standard and reward pools from their official LaunchLab platform configuration accounts.
+- Parses the complete current LaunchLab trade event, including reserves, all fee legs, pool status, and the three appended trade accounts.
+- Supports the current 18-account LaunchLab trade instruction layout and preserves the appended accounts when merging log and instruction events.
+- Adds a real mainnet StonkFun reward-pool transaction regression using signature `4Pb4vgRq6rAFi5NmMZMsfBvuwVVsvBqhySfPS3naMksujvEiGtPjxRLape7V82ZVQvxt7P8YKPCL6RSWTreMUFrY`.
+- Adds a real mainnet graduated StonkFun CPMM swap regression using signature `3jiXX1AXnQfve1FCHwqUUXoM2BpS2jZEDNB7S6UXLdHGQa3VmBoWNVw9A2gTLbvEZeSU697s9XKgKDqxaR92Qqcz`.
+
+Run the gated mainnet parser regression with:
+
+```bash
+RUN_MAINNET_TESTS=1 cargo test --test current_mainnet_transactions current_stonkfun_reward_trade_preserves_platform_quote_accounts_and_fees -- --nocapture
+RUN_MAINNET_TESTS=1 cargo test --test current_mainnet_transactions current_stonkfun_graduated_cpmm_swap_parses_from_mainnet -- --nocapture
+```
+
+#### v0.7.3
+
+- Syncs the vendored PumpFun, PumpSwap, and Pump Fees IDLs with the current official `pump-public-docs` definitions.
+- Adds current creator-fee, holder-reward, quote, cashback, buyback, and pool configuration fields across instruction, log, account, RPC, gRPC, and ShredStream parsing paths.
+- Preserves PumpFun holder-reward values when merging outer instructions with event-CPI data and keeps the multi-language event schema aligned.
+- Rejects truncated known PumpSwap trade and CreatePool tails while retaining complete historical layouts and forward-compatible appended fields.
+
+#### v0.7.2
+
+- Syncs vendored Meteora DAMM v2 IDL to **0.2.4** and DBC IDL to **0.2.1**.
+- Adds parsers for DAMM v2 Position Delegate and config events: `EvtUpdateDelegatePermission`, `EvtWithdrawDeadLiquidityReward`, `EvtCreateConfig`, and `EvtCreateDynamicConfig` (including the 0.2.4 `permission` field).
+- Wires the new events through log, optimized matcher, and inner-instruction paths, plus `EventType` / `DexEvent` filters.
+- Identifies Yellowstone V1 messages through `Message.config` and exposes all four transaction-config requests: priority fee, compute-unit limit, loaded-accounts data-size limit, and heap size. V1 ComputeBudget instructions remain ignored as required by Solana.
+- Yellowstone V1 ingestion requires `yellowstone-grpc-proto >= 12.6.0` and a server running Yellowstone geyser plugin `>= 15.1.1`; older server plugins silently downgrade V1 to V0 and discard `Message.config` before transmission.
+- Accelerates RPC inner-instruction Base58 decoding through the portable safe `base58-turbo` path. The saved mainnet corpus reduces end-to-end RPC parse latency by 17.7% to more than 80%, depending on instruction payload size.
+- Borrows RPC log and balance metadata through the parse path to avoid redundant cloning. The final cross-protocol corpus parses PumpFun, PumpSwap, Raydium CPMM, and Meteora/Orca transactions in 7.40-11.80 us.
+- Adds offline PumpFun, PumpSwap, Raydium CPMM, and Meteora DLMM/Orca RPC fixtures with exact event regression tests and a shared cross-protocol benchmark.
+
+#### v0.7.1
+
+- Fixes current Meteora DAMM v2 `EvtSwap2` parsing for the 180-byte layout, all three swap modes, transfer fees, reserves, and the mainnet fee-layout upgrade boundary.
+- Adds the current unified `EvtLiquidityChange` discriminator and routes its `change_type` to exact AddLiquidity or RemoveLiquidity events across log, optimized, and inner-instruction paths.
+- Adds reproducible mainnet RPC regression tests for DAMM v2 Swap and AddLiquidity transactions.
+
+#### v0.7.0
+
+- Upgrades the public Solana types to Solana 4, including Legacy, V0, and V1 transaction messages.
+- Uses `wincode 0.5.5` in production ShredStream and RPC transaction decode paths. On the reproducible 21,000-byte Entry benchmark, decode latency dropped from the previous bincode baseline of 39.005 us/op to 8.956 us/op (77.0%, 4.36x faster).
+- Removes unused direct dependencies and aligns the Agave dependency family. The normal dependency graph dropped from 658 to 533 package/version entries, while duplicated crate names dropped from 111 to 28.
+- Requires Rust 1.91 or newer for the Solana 4 client dependency stack.
+- Adds Meteora DLMM user token account context and preserves backward-compatible Serde defaults.
+
+#### v0.6.6
+
+- Adds the post-transaction `token_balance` to PumpFun trade events in raw mint units.
+- Adds the post-transaction `sol_balance` in lamports, filled directly from transaction metadata without extra RPC calls.
+- Reduces end-to-end PumpFun Yellowstone parsing latency by 34.23% on the captured benchmark fixture, from 6.7349 us to 4.4293 us.
+- Adds reproducible Criterion benchmarks, a captured Yellowstone transaction fixture, and live balance-delta validation.
+
+#### v0.6.4
+
+- Adds `token_x_mint` and `token_y_mint` context to current Meteora DLMM swap events.
+- Anchors mint enrichment to each event pool so multi-leg DLMM routes cannot reuse another pool's accounts.
+- Adds reusable mainnet RPC examples captured on 2026-08-14 for direct `swap` and CPI `swap2` parsing.
+- Keeps JSON produced before the new mint fields compatible with Serde deserialization.
+
+#### v0.6.3
+
+- Exposes current LaunchLab quote mint and global configuration context, including USD1 pools.
+- Adds opt-in transaction fee, priority fee, compute budget, and SWQoS tip parsing for all providers supported by sol-trade-sdk.
+- Identifies each recognized tip provider and recipient while keeping the disabled transaction-cost path allocation-free and effectively zero-cost.
+- Adds reusable mainnet transaction fixtures captured on 2026-08-13 for LaunchLab USD1 and transaction-cost parsing.
+
+#### v0.6.2
+
+- Parses the current Meteora DLMM Anchor event-CPI prefix layout while retaining legacy suffix compatibility.
+- Aligns Meteora DLMM, Raydium CPMM/AMM V4, and Orca Whirlpool event and account layouts with current official sources.
+- Preserves repeated swaps and liquidity events with occurrence-aware log/instruction deduplication and stack-aware CPI merging.
+- Adds reusable mainnet transaction fixtures captured on 2026-08-13 for Meteora DLMM, PumpFun, PumpSwap, Raydium, and Orca.
+
+#### v0.6.1
+
+- Decodes the complete current PumpSwap Buy/Sell event tail across log and CPI/inner-instruction paths: cashback, buyback fees, signed virtual quote reserves, boost eligibility, and base supply.
+- Uses one validated PumpSwap trade decoder for the default and zero-copy feature configurations while preserving historical event layouts.
+- Rejects truncated tails, malformed UTF-8, invalid Borsh booleans, and overflowing string bounds instead of emitting partially decoded events.
+- Keeps older serialized PumpSwap events compatible by defaulting fields introduced by the buyback and boost upgrades.
 
 #### v0.5.15
 
@@ -184,6 +278,22 @@ sol-parser-sdk = { version = "0.5.15", default-features = false, features = ["pa
 
 ### Performance Testing
 
+Transaction-cost parsing is opt-in and does not run on the default DEX event path:
+
+```rust
+use sol_parser_sdk::{parse_yellowstone_transaction_cost, SwqosProvider};
+
+let cost = parse_yellowstone_transaction_cost(&transaction, &meta).unwrap();
+let jito_tip = cost.tip_lamports_for(SwqosProvider::Jito);
+```
+
+Yellowstone and RPC results use status metadata for the authoritative transaction fee and
+confirmed tip status. `transaction_fee_lamports` already includes the priority fee; relay tips
+are separate transfers and are added only in `total_fee_and_tip_lamports`. Tip recipients for every
+SWQoS provider supported by `sol-trade-sdk` are recognized automatically, and each `TipPayment`
+identifies its provider. ShredStream can expose requested compute-budget values and outer tip
+transfers, but cannot confirm fees, execution, inner instructions, or ALT-loaded tip recipients.
+
 Test parsing latency with the optimized examples:
 
 ```bash
@@ -227,7 +337,7 @@ cargo run --example pumpswap_ordered --release
 | Meteora DAMM V2 events | `cargo run --example meteora_damm_grpc --release` | [examples/meteora_damm_grpc.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/meteora_damm_grpc.rs) |
 | Parse Meteora DAMM tx by signature | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` | [examples/parse_meteora_damm_tx.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/parse_meteora_damm_tx.rs) |
 | **Non-Pump DEX dry-run scenarios** | | |
-| Raydium LaunchLab migration filter | `cargo run --example raydium_launchlab_migration` | [examples/raydium_launchlab_migration.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_launchlab_migration.rs) |
+| LaunchLab migration filter | `cargo run --example raydium_launchlab_migration` | [examples/raydium_launchlab_migration.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_launchlab_migration.rs) |
 | Raydium CPMM new pool filter | `cargo run --example raydium_cpmm_new_pool` | [examples/raydium_cpmm_new_pool.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_cpmm_new_pool.rs) |
 | Raydium CLMM token price math | `cargo run --example raydium_clmm_token_price` | [examples/raydium_clmm_token_price.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_clmm_token_price.rs) |
 | Orca Whirlpool token price math | `cargo run --example orca_whirlpool_token_price` | [examples/orca_whirlpool_token_price.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/orca_whirlpool_token_price.rs) |
@@ -387,7 +497,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - ✅ **PumpFun** - Meme coin trading (ultra-fast zero-copy path, incl. v2 instructions)
 - ✅ **Pump Fees** - Pump fee-sharing configuration events
 - ✅ **PumpSwap** - PumpFun swap protocol
-- ✅ **Raydium LaunchLab** - Token launch platform
+- ✅ **LaunchLab** - Token launch platform, including StonkFun attribution
 - ✅ **Raydium AMM V4** - Automated Market Maker
 - ✅ **Raydium CLMM** - Concentrated Liquidity
 - ✅ **Raydium CPMM** - Concentrated Pool
@@ -408,7 +518,7 @@ Each protocol supports:
 
 | Protocol | Events | Accounts | Examples | Language constants |
 |----------|--------|----------|----------|--------------------|
-| Raydium LaunchLab | Trade, pool create, migrate | Pending | Migration, buy/sell oracle planned | Rust, Node, Python, Go |
+| LaunchLab | Trade, pool create, migrate | Pending | Migration, buy/sell oracle planned | Rust, Node, Python, Go |
 | Raydium CPMM | Swap, deposit, withdraw, initialize | AmmConfig, PoolState | New pool, token price | Rust, Node, Python, Go |
 | Raydium CLMM | Swap, pool, position, liquidity | AmmConfig, PoolState, TickArray | Token price | Rust, Node, Python, Go |
 | Raydium AMM V4 | Swap, deposit, withdraw, initialize2 | Pending | Token price oracle planned | Rust, Node, Python, Go |
@@ -706,7 +816,7 @@ MIT License
 
 ## 📞 Contact
 
-- **Repository**: https://github.com/0xfnzero/solana-streamer
+- **Repository**: https://github.com/0xfnzero/sol-parser-sdk
 - **Telegram**: https://t.me/fnzero_group
 - **Discord**: https://discord.gg/vuazbGkqQE
 

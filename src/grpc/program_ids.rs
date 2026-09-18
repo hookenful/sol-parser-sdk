@@ -1,4 +1,5 @@
 use crate::grpc::types::Protocol;
+use once_cell::sync::Lazy;
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
@@ -32,24 +33,63 @@ pub const METEORA_DAMM_V2_PROGRAM: Pubkey = pubkey!("cpamdpZCGKUy5JxQXB4dcpGPiik
 pub const METEORA_DLMM_PROGRAM: Pubkey = pubkey!("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 pub const METEORA_DBC_PROGRAM: Pubkey = pubkey!("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
 
-lazy_static::lazy_static! {
-    pub static ref PROTOCOL_PROGRAM_IDS: HashMap<Protocol, Vec<&'static str>> = {
-        let mut map = HashMap::new();
-        map.insert(Protocol::PumpFun, vec![PUMPFUN_PROGRAM_ID]);
-        map.insert(Protocol::PumpSwap, vec![PUMPSWAP_PROGRAM_ID]);
-        map.insert(Protocol::PumpFees, vec![PUMPSWAP_FEES_PROGRAM_ID]);
-        map.insert(Protocol::RaydiumLaunchlab, vec![RAYDIUM_LAUNCHLAB_PROGRAM_ID]);
-        map.insert(Protocol::RaydiumCpmm, vec![RAYDIUM_CPMM_PROGRAM_ID]);
-        map.insert(Protocol::RaydiumClmm, vec![RAYDIUM_CLMM_PROGRAM_ID]);
-        map.insert(Protocol::RaydiumAmmV4, vec![RAYDIUM_AMM_V4_PROGRAM_ID]);
-        map.insert(Protocol::OrcaWhirlpool, vec![ORCA_WHIRLPOOL_PROGRAM_ID]);
-        map.insert(Protocol::MeteoraPools, vec![METEORA_POOLS_PROGRAM_ID]);
-        map.insert(Protocol::MeteoraDammV2, vec![METEORA_DAMM_V2_PROGRAM_ID]);
-        map.insert(Protocol::MeteoraDlmm, vec![METEORA_DLMM_PROGRAM_ID]);
-        map.insert(Protocol::MeteoraDbc, vec![METEORA_DBC_PROGRAM_ID]);
-        map
-    };
+/// Avoid base58 decoding for program ids emitted by the DEXes this crate parses.
+#[inline(always)]
+pub(crate) fn known_program_id(program_id: &str) -> Option<Pubkey> {
+    match program_id {
+        PUMPFUN_PROGRAM_ID => Some(PUMPFUN_PROGRAM),
+        PUMPSWAP_PROGRAM_ID => Some(PUMPSWAP_PROGRAM),
+        PUMPSWAP_FEES_PROGRAM_ID => Some(PUMPSWAP_FEES_PROGRAM),
+        RAYDIUM_LAUNCHLAB_PROGRAM_ID => Some(RAYDIUM_LAUNCHLAB_PROGRAM),
+        RAYDIUM_CPMM_PROGRAM_ID => Some(RAYDIUM_CPMM_PROGRAM),
+        RAYDIUM_CLMM_PROGRAM_ID => Some(RAYDIUM_CLMM_PROGRAM),
+        RAYDIUM_AMM_V4_PROGRAM_ID => Some(RAYDIUM_AMM_V4_PROGRAM),
+        ORCA_WHIRLPOOL_PROGRAM_ID => Some(ORCA_WHIRLPOOL_PROGRAM),
+        METEORA_POOLS_PROGRAM_ID => Some(METEORA_POOLS_PROGRAM),
+        METEORA_DAMM_V2_PROGRAM_ID => Some(METEORA_DAMM_V2_PROGRAM),
+        METEORA_DLMM_PROGRAM_ID => Some(METEORA_DLMM_PROGRAM),
+        METEORA_DBC_PROGRAM_ID => Some(METEORA_DBC_PROGRAM),
+        _ => None,
+    }
 }
+
+/// Programs whose instruction positions are queried later by account/data fillers.
+#[inline(always)]
+pub(crate) fn needs_invoke_context(program_id: &Pubkey) -> bool {
+    matches!(
+        *program_id,
+        PUMPFUN_PROGRAM
+            | PUMPSWAP_PROGRAM
+            | PUMPSWAP_FEES_PROGRAM
+            | RAYDIUM_LAUNCHLAB_PROGRAM
+            | RAYDIUM_CPMM_PROGRAM
+            | RAYDIUM_CLMM_PROGRAM
+            | RAYDIUM_AMM_V4_PROGRAM
+            | ORCA_WHIRLPOOL_PROGRAM
+            | METEORA_POOLS_PROGRAM
+            | METEORA_DAMM_V2_PROGRAM
+            | METEORA_DLMM_PROGRAM
+    )
+}
+
+pub static PROTOCOL_PROGRAM_IDS: Lazy<HashMap<Protocol, Vec<&'static str>>> = Lazy::new(|| {
+    let mut map = HashMap::new();
+    map.insert(Protocol::PumpFun, vec![PUMPFUN_PROGRAM_ID]);
+    map.insert(Protocol::PumpSwap, vec![PUMPSWAP_PROGRAM_ID]);
+    map.insert(Protocol::PumpFees, vec![PUMPSWAP_FEES_PROGRAM_ID]);
+    for protocol in [Protocol::LaunchLab, Protocol::StonkFun, Protocol::RaydiumLaunchlab] {
+        map.insert(protocol, vec![RAYDIUM_LAUNCHLAB_PROGRAM_ID]);
+    }
+    map.insert(Protocol::RaydiumCpmm, vec![RAYDIUM_CPMM_PROGRAM_ID]);
+    map.insert(Protocol::RaydiumClmm, vec![RAYDIUM_CLMM_PROGRAM_ID]);
+    map.insert(Protocol::RaydiumAmmV4, vec![RAYDIUM_AMM_V4_PROGRAM_ID]);
+    map.insert(Protocol::OrcaWhirlpool, vec![ORCA_WHIRLPOOL_PROGRAM_ID]);
+    map.insert(Protocol::MeteoraPools, vec![METEORA_POOLS_PROGRAM_ID]);
+    map.insert(Protocol::MeteoraDammV2, vec![METEORA_DAMM_V2_PROGRAM_ID]);
+    map.insert(Protocol::MeteoraDlmm, vec![METEORA_DLMM_PROGRAM_ID]);
+    map.insert(Protocol::MeteoraDbc, vec![METEORA_DBC_PROGRAM_ID]);
+    map
+});
 
 pub fn get_program_ids_for_protocols(protocols: &[Protocol]) -> Vec<String> {
     let mut program_ids = Vec::new();
@@ -108,5 +148,46 @@ mod tests {
                 "missing program id mapping for {protocol:?}"
             );
         }
+    }
+
+    #[test]
+    fn invoke_context_only_tracks_programs_used_by_fillers() {
+        for program_id in [
+            PUMPFUN_PROGRAM,
+            PUMPSWAP_PROGRAM,
+            PUMPSWAP_FEES_PROGRAM,
+            RAYDIUM_LAUNCHLAB_PROGRAM,
+            RAYDIUM_CPMM_PROGRAM,
+            RAYDIUM_CLMM_PROGRAM,
+            RAYDIUM_AMM_V4_PROGRAM,
+            ORCA_WHIRLPOOL_PROGRAM,
+            METEORA_POOLS_PROGRAM,
+            METEORA_DAMM_V2_PROGRAM,
+            METEORA_DLMM_PROGRAM,
+        ] {
+            assert!(needs_invoke_context(&program_id));
+        }
+        assert!(!needs_invoke_context(&Pubkey::new_unique()));
+    }
+
+    #[test]
+    fn known_log_program_ids_map_without_decoding() {
+        for (encoded, expected) in [
+            (PUMPFUN_PROGRAM_ID, PUMPFUN_PROGRAM),
+            (PUMPSWAP_PROGRAM_ID, PUMPSWAP_PROGRAM),
+            (PUMPSWAP_FEES_PROGRAM_ID, PUMPSWAP_FEES_PROGRAM),
+            (RAYDIUM_LAUNCHLAB_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM),
+            (RAYDIUM_CPMM_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM),
+            (RAYDIUM_CLMM_PROGRAM_ID, RAYDIUM_CLMM_PROGRAM),
+            (RAYDIUM_AMM_V4_PROGRAM_ID, RAYDIUM_AMM_V4_PROGRAM),
+            (ORCA_WHIRLPOOL_PROGRAM_ID, ORCA_WHIRLPOOL_PROGRAM),
+            (METEORA_POOLS_PROGRAM_ID, METEORA_POOLS_PROGRAM),
+            (METEORA_DAMM_V2_PROGRAM_ID, METEORA_DAMM_V2_PROGRAM),
+            (METEORA_DLMM_PROGRAM_ID, METEORA_DLMM_PROGRAM),
+            (METEORA_DBC_PROGRAM_ID, METEORA_DBC_PROGRAM),
+        ] {
+            assert_eq!(known_program_id(encoded), Some(expected));
+        }
+        assert_eq!(known_program_id("11111111111111111111111111111111"), None);
     }
 }

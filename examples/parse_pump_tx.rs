@@ -66,7 +66,7 @@ fn main() {
     } else {
         println!("=== Parsed Events (SDK Format) ===\n");
         for (i, event) in events.iter().enumerate() {
-            println!("Event #{}: {:?}\n", i + 1, event);
+            println!("Event #{}:\n{:#?}\n", i + 1, event);
         }
     }
 

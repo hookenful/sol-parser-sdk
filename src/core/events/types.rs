@@ -18,6 +18,29 @@ pub const PUMPFUN_SOLSCAN_SOL_QUOTE_MINT: Pubkey =
 /// SPL wrapped-SOL mint.
 pub const PUMPFUN_WSOL_QUOTE_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 
+/// StonkFun LaunchLab platform config for standard (creator-fee) launches.
+pub const STONKFUN_STANDARD_PLATFORM_CONFIG: Pubkey =
+    pubkey!("4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7");
+
+/// StonkFun LaunchLab platform config for reward (transfer-fee) launches.
+pub const STONKFUN_REWARD_PLATFORM_CONFIG: Pubkey =
+    pubkey!("6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StonkFunMode {
+    Standard,
+    Reward,
+}
+
+#[inline]
+pub fn stonkfun_mode_from_platform_config(platform_config: Pubkey) -> Option<StonkFunMode> {
+    match platform_config {
+        STONKFUN_STANDARD_PLATFORM_CONFIG => Some(StonkFunMode::Standard),
+        STONKFUN_REWARD_PLATFORM_CONFIG => Some(StonkFunMode::Reward),
+        _ => None,
+    }
+}
+
 #[inline]
 pub fn normalize_pumpfun_quote_mint(quote_mint: Pubkey) -> Pubkey {
     if quote_mint == Pubkey::default() {
@@ -76,8 +99,43 @@ pub struct RaydiumLaunchlabPoolCreateEvent {
     pub metadata: EventMetadata,
     pub base_mint_param: BaseMintParam,
     pub pool_state: Pubkey,
+    #[serde(default)]
+    pub payer: Pubkey,
     pub creator: Pubkey,
+    #[serde(default)]
+    pub global_config: Pubkey,
+    #[serde(default)]
+    pub platform_config: Pubkey,
+    #[serde(default)]
+    pub base_mint: Pubkey,
+    #[serde(default)]
+    pub quote_mint: Pubkey,
+    #[serde(default)]
+    pub base_vault: Pubkey,
+    #[serde(default)]
+    pub quote_vault: Pubkey,
+    #[serde(default)]
+    pub base_token_program: Pubkey,
+    #[serde(default)]
+    pub quote_token_program: Pubkey,
 }
+
+impl RaydiumLaunchlabPoolCreateEvent {
+    #[inline]
+    pub fn stonkfun_mode(&self) -> Option<StonkFunMode> {
+        stonkfun_mode_from_platform_config(self.platform_config)
+    }
+
+    #[inline]
+    pub fn is_stonkfun(&self) -> bool {
+        self.stonkfun_mode().is_some()
+    }
+}
+
+/// Preferred generic name for a pool created by the shared LaunchLab program.
+pub type LaunchLabPoolCreateEvent = RaydiumLaunchlabPoolCreateEvent;
+/// Preferred platform name when [`RaydiumLaunchlabPoolCreateEvent::is_stonkfun`] is true.
+pub type StonkFunPoolCreateEvent = RaydiumLaunchlabPoolCreateEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaseMintParam {
@@ -89,7 +147,7 @@ pub struct BaseMintParam {
 
 /// RaydiumLaunchlab Trade Event
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaydiumLaunchlabTradeEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
@@ -103,9 +161,109 @@ pub struct RaydiumLaunchlabTradeEvent {
 
     // === 非 Borsh 字段（派生字段）===
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub total_base_sell: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub virtual_base: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub virtual_quote: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub real_base_before: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub real_quote_before: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub real_base_after: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub real_quote_after: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub protocol_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub platform_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub creator_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub share_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub trade_direction: TradeDirection,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub pool_status: RaydiumLaunchlabPoolStatus,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub exact_in: bool,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub global_config: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub platform_config: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub user_base_token: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub user_quote_token: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub base_vault: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub quote_vault: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub base_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub quote_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub base_token_program: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub quote_token_program: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub system_program: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub platform_associated_account: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub creator_associated_account: Pubkey,
+}
+
+impl RaydiumLaunchlabTradeEvent {
+    #[inline]
+    pub fn stonkfun_mode(&self) -> Option<StonkFunMode> {
+        stonkfun_mode_from_platform_config(self.platform_config)
+    }
+
+    #[inline]
+    pub fn is_stonkfun(&self) -> bool {
+        self.stonkfun_mode().is_some()
+    }
+}
+
+/// Preferred generic name for a trade emitted by the shared LaunchLab program.
+pub type LaunchLabTradeEvent = RaydiumLaunchlabTradeEvent;
+/// Preferred platform name when [`RaydiumLaunchlabTradeEvent::is_stonkfun`] is true.
+pub type StonkFunTradeEvent = RaydiumLaunchlabTradeEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RaydiumLaunchlabPoolStatus {
+    #[default]
+    Fund,
+    Migrate,
+    Trade,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -175,6 +333,12 @@ pub struct PumpFunTradeEvent {
     pub quote_amount: u64,
     pub virtual_quote_reserves: u64,
     pub real_quote_reserves: u64,
+    /// Holder rewards fee rate. Zero for regular coins and legacy events.
+    #[serde(default)]
+    pub holder_rewards_bps: u64,
+    /// Holder rewards amount. Zero for regular coins and legacy events.
+    #[serde(default)]
+    pub holder_rewards: u64,
     /// 是否返现代币（由 cashback_fee_basis_points > 0 推导，供 sol-trade-sdk 等构造 sell 指令用）
     #[borsh(skip)]
     pub is_cashback_coin: bool,
@@ -192,6 +356,17 @@ pub struct PumpFunTradeEvent {
     pub spendable_quote_in: u64, // buy_exact_quote_in_v2.args.spendable_quote_in
     #[borsh(skip)]
     pub min_tokens_out: u64, // buy_exact*.args.min_tokens_out
+
+    // === Post-transaction balances (raw units, filled from transaction meta) ===
+    /// User's base-mint token-account balance after this transaction. `None` when transaction
+    /// meta is unavailable (for example, ShredStream events).
+    #[borsh(skip)]
+    #[serde(default, alias = "post_token_balance")]
+    pub token_balance: Option<u64>,
+    /// User's native SOL balance in lamports after this transaction.
+    #[borsh(skip)]
+    #[serde(default, alias = "post_sol_balance")]
+    pub sol_balance: Option<u64>,
 
     // === 指令账户字段 (从指令账户填充，不在 Borsh 数据中) ===
     #[borsh(skip)]
@@ -465,6 +640,12 @@ pub struct PumpFunCreateTokenEvent {
     /// Initial virtual quote reserves. For SOL pools this is the SOL-side reserve;
     /// for USDC pools this is the USDC-side reserve.
     pub virtual_quote_reserves: u64,
+    /// Coin-specific creator fee rate. Zero means the standard fee schedule.
+    #[serde(default)]
+    pub creator_fee_bps: u64,
+    /// Whether creator fees are distributed to holders.
+    #[serde(default)]
+    pub is_holder_reward: bool,
     /// Original PumpFun instruction name: `"create"` or `"create_v2"`.
     #[borsh(skip)]
     pub ix_name: String,
@@ -526,6 +707,10 @@ pub struct PumpFunCreateV2TokenEvent {
     pub quote_token_program: Pubkey,
     #[borsh(skip)]
     pub virtual_quote_reserves: u64,
+    #[serde(default)]
+    pub creator_fee_bps: u64,
+    #[serde(default)]
+    pub is_holder_reward: bool,
     /// Original PumpFun instruction name: `"create"` or `"create_v2"`.
     #[borsh(skip)]
     pub ix_name: String,
@@ -629,6 +814,21 @@ pub struct PumpSwapBuyEvent {
     pub cashback_fee_basis_points: u64,
     /// Cashback amount (PUMP_CASHBACK_README)
     pub cashback: u64,
+    #[serde(default)]
+    pub buyback_fee_basis_points: u64,
+    #[serde(default)]
+    pub buyback_fee: u64,
+    /// Signed virtual quote reserves appended by the PumpSwap boost upgrade.
+    #[serde(default)]
+    pub virtual_quote_reserves: i128,
+    #[serde(default)]
+    pub can_boost: bool,
+    #[serde(default)]
+    pub base_supply: u64,
+    #[serde(default)]
+    pub holder_rewards_bps: u64,
+    #[serde(default)]
+    pub holder_rewards: u64,
 
     // === 额外的信息 ===
     #[borsh(skip)]
@@ -691,6 +891,21 @@ pub struct PumpSwapSellEvent {
     pub cashback_fee_basis_points: u64,
     /// Cashback amount (PUMP_CASHBACK_README)
     pub cashback: u64,
+    #[serde(default)]
+    pub buyback_fee_basis_points: u64,
+    #[serde(default)]
+    pub buyback_fee: u64,
+    /// Signed virtual quote reserves appended by the PumpSwap boost upgrade.
+    #[serde(default)]
+    pub virtual_quote_reserves: i128,
+    #[serde(default)]
+    pub can_boost: bool,
+    #[serde(default)]
+    pub base_supply: u64,
+    #[serde(default)]
+    pub holder_rewards_bps: u64,
+    #[serde(default)]
+    pub holder_rewards: u64,
 
     // === 额外的信息 ===
     #[borsh(skip)]
@@ -751,6 +966,15 @@ pub struct PumpSwapCreatePoolEvent {
     /// not carry this value, so log-only parses keep the default `false`.
     #[serde(default)]
     pub is_cashback_coin: bool,
+    /// Coin-specific creator fee rate carried over from the bonding curve.
+    #[serde(default)]
+    pub creator_fee_bps: u64,
+    /// Reserved by the program; currently always false.
+    #[serde(default)]
+    pub can_edit_creator_fee: bool,
+    /// Whether creator fees are distributed to holders.
+    #[serde(default)]
+    pub is_holder_reward: bool,
 }
 
 /// PumpSwap Pool Created Event - 指令解析版本
@@ -1483,14 +1707,14 @@ pub struct RaydiumAmmV4WithdrawPnlEvent {
 
 // ====================== Account Events ======================
 
-/// RaydiumLaunchlab (Raydium LaunchLab) AmmCreatorFeeOn enum
+/// RaydiumLaunchlab (LaunchLab) AmmCreatorFeeOn enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AmmCreatorFeeOn {
     QuoteToken = 0,
     BothToken = 1,
 }
 
-/// RaydiumLaunchlab (Raydium LaunchLab) VestingSchedule
+/// RaydiumLaunchlab (LaunchLab) VestingSchedule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VestingSchedule {
     pub total_locked_amount: u64,
@@ -1562,7 +1786,7 @@ pub struct RaydiumLaunchlabPlatformConfigAccountEvent {
     pub platform_config: RaydiumLaunchlabPlatformConfig,
 }
 
-/// RaydiumLaunchlab (Raydium LaunchLab) BondingCurveParam
+/// RaydiumLaunchlab (LaunchLab) BondingCurveParam
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BondingCurveParam {
     pub migrate_type: u8,
@@ -1575,7 +1799,7 @@ pub struct BondingCurveParam {
     pub unlock_period: u64,
 }
 
-/// RaydiumLaunchlab (Raydium LaunchLab) PlatformCurveParam
+/// RaydiumLaunchlab (LaunchLab) PlatformCurveParam
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformCurveParam {
     pub epoch: u64,
@@ -1665,6 +1889,15 @@ pub struct PumpSwapPool {
     pub coin_creator: Pubkey,
     pub is_mayhem_mode: bool,
     pub is_cashback_coin: bool,
+    /// Added by the PumpSwap boost upgrade. Legacy pools decode this as zero.
+    #[serde(default)]
+    pub virtual_quote_reserves: i128,
+    #[serde(default)]
+    pub creator_fee_bps: u64,
+    #[serde(default)]
+    pub can_edit_creator_fee: bool,
+    #[serde(default)]
+    pub is_holder_reward: bool,
 }
 
 /// PumpFun Bonding Curve Account Event
@@ -1687,6 +1920,12 @@ pub struct PumpFunBondingCurve {
     pub is_mayhem_mode: bool,
     pub is_cashback_coin: bool,
     pub quote_mint: Pubkey,
+    #[serde(default)]
+    pub creator_fee_bps: u64,
+    #[serde(default)]
+    pub can_edit_creator_fee: bool,
+    #[serde(default)]
+    pub is_holder_reward: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2393,7 +2632,67 @@ pub struct MeteoraDammV2SwapEvent {
     pub actual_amount_in: u64,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub current_timestamp: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub collect_fee_mode: u8,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub amount_0: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub amount_1: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub swap_mode: u8,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub excluded_fee_input_amount: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub amount_left: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub claiming_fee: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub compounding_fee: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub included_transfer_fee_amount_in: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub included_transfer_fee_amount_out: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub excluded_transfer_fee_amount_out: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_a_amount: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_b_amount: u64,
     // ---------- 账号 -------------
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub pool_authority: Pubkey,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub input_token_account: Pubkey,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub output_token_account: Pubkey,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub payer: Pubkey,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub referral_token_account: Option<Pubkey>,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub event_authority: Pubkey,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub program: Pubkey,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub token_a_vault: Pubkey,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
@@ -2410,7 +2709,7 @@ pub struct MeteoraDammV2SwapEvent {
 
 /// Meteora DAMM V2 Add Liquidity Event
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeteoraDammV2AddLiquidityEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
@@ -2433,11 +2732,17 @@ pub struct MeteoraDammV2AddLiquidityEvent {
     pub total_amount_a: u64,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub total_amount_b: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_a_amount: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_b_amount: u64,
 }
 
 /// Meteora DAMM V2 Remove Liquidity Event
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeteoraDammV2RemoveLiquidityEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
@@ -2456,6 +2761,18 @@ pub struct MeteoraDammV2RemoveLiquidityEvent {
     pub token_a_amount_threshold: u64,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub token_b_amount_threshold: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub total_amount_a: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub total_amount_b: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_a_amount: u64,
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub reserve_b_amount: u64,
 }
 
 /// Meteora DAMM V2 Initialize Pool Event
@@ -2514,6 +2831,66 @@ pub struct MeteoraDammV2ClosePositionEvent {
     pub position_nft_mint: Pubkey, // 32 bytes
 }
 
+/// Nested dynamic fee parameters from DAMM v2 `PoolFeeParameters`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct MeteoraDammV2DynamicFeeParameters {
+    pub bin_step: u16,
+    pub bin_step_u128: u128,
+    pub filter_period: u16,
+    pub decay_period: u16,
+    pub reduction_factor: u16,
+    pub max_volatility_accumulator: u32,
+    pub variable_fee_control: u32,
+}
+
+/// Meteora DAMM V2 Update Delegate Permission Event (IDL `EvtUpdateDelegatePermission`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2UpdateDelegatePermissionEvent {
+    pub metadata: EventMetadata,
+    pub position: Pubkey,
+    pub owner: Pubkey,
+    pub permission: u32,
+    pub delegate: Option<Pubkey>,
+}
+
+/// Meteora DAMM V2 Withdraw Dead Liquidity Reward Event (IDL `EvtWithdrawDeadLiquidityReward`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2WithdrawDeadLiquidityRewardEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub reward_mint: Pubkey,
+    pub amount: u64,
+}
+
+/// Meteora DAMM V2 Create Config Event (IDL `EvtCreateConfig`, includes 0.2.4 `permission`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2CreateConfigEvent {
+    pub metadata: EventMetadata,
+    pub base_fee_data: [u8; 27],
+    pub compounding_fee_bps: u16,
+    pub padding: u8,
+    pub dynamic_fee: Option<MeteoraDammV2DynamicFeeParameters>,
+    pub vault_config_key: Pubkey,
+    pub pool_creator_authority: Pubkey,
+    pub activation_type: u8,
+    pub sqrt_min_price: u128,
+    pub sqrt_max_price: u128,
+    pub collect_fee_mode: u8,
+    pub index: u64,
+    pub config: Pubkey,
+    pub permission: u128,
+}
+
+/// Meteora DAMM V2 Create Dynamic Config Event (IDL `EvtCreateDynamicConfig`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2CreateDynamicConfigEvent {
+    pub metadata: EventMetadata,
+    pub config: Pubkey,
+    pub pool_creator_authority: Pubkey,
+    pub index: u64,
+    pub permission: u128,
+}
+
 // ====================== Meteora DBC Events ======================
 
 /// Meteora DBC Swap Event (IDL `EvtSwap`)
@@ -2563,6 +2940,23 @@ pub struct MeteoraDbcCurveCompleteEvent {
 pub struct MeteoraDlmmSwapEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
+
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub token_x_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub token_y_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub user_token_in: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub user_token_out: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    /// Minimum output accepted by an exact-in instruction; zero when instruction context is absent.
+    pub min_amount_out: u64,
 
     // === Borsh 序列化字段（从 inner instruction data 读取）===
     pub pool: Pubkey,      // 32 bytes
@@ -2676,4 +3070,123 @@ pub struct MeteoraDlmmClaimFeeEvent {
     pub owner: Pubkey,    // 32 bytes
     pub fee_x: u64,       // 8 bytes
     pub fee_y: u64,       // 8 bytes
+}
+
+#[cfg(test)]
+mod serde_compat_tests {
+    use super::{
+        EventMetadata, MeteoraDlmmSwapEvent, PumpSwapBuyEvent, PumpSwapPool, PumpSwapSellEvent,
+    };
+    use serde::Serialize;
+    use serde_json::Value;
+    use solana_sdk::pubkey::Pubkey;
+
+    fn without_fields<T: Serialize>(value: &T, fields: &[&str]) -> Value {
+        let mut json = serde_json::to_value(value).expect("serialize fixture");
+        let object = json.as_object_mut().expect("fixture must be an object");
+        for field in fields {
+            object.remove(*field);
+        }
+        json
+    }
+
+    #[test]
+    fn pumpswap_buy_accepts_json_from_before_boost_upgrade() {
+        let event = PumpSwapBuyEvent::default();
+        let json = without_fields(
+            &event,
+            &[
+                "buyback_fee_basis_points",
+                "buyback_fee",
+                "virtual_quote_reserves",
+                "can_boost",
+                "base_supply",
+            ],
+        );
+
+        let decoded: PumpSwapBuyEvent = serde_json::from_value(json).expect("legacy buy JSON");
+        assert_eq!(decoded.buyback_fee_basis_points, 0);
+        assert_eq!(decoded.buyback_fee, 0);
+        assert_eq!(decoded.virtual_quote_reserves, 0);
+        assert!(!decoded.can_boost);
+        assert_eq!(decoded.base_supply, 0);
+    }
+
+    #[test]
+    fn pumpswap_sell_accepts_json_from_before_boost_upgrade() {
+        let event = PumpSwapSellEvent::default();
+        let json = without_fields(
+            &event,
+            &[
+                "buyback_fee_basis_points",
+                "buyback_fee",
+                "virtual_quote_reserves",
+                "can_boost",
+                "base_supply",
+            ],
+        );
+
+        let decoded: PumpSwapSellEvent = serde_json::from_value(json).expect("legacy sell JSON");
+        assert_eq!(decoded.buyback_fee_basis_points, 0);
+        assert_eq!(decoded.buyback_fee, 0);
+        assert_eq!(decoded.virtual_quote_reserves, 0);
+        assert!(!decoded.can_boost);
+        assert_eq!(decoded.base_supply, 0);
+    }
+
+    #[test]
+    fn pumpswap_pool_accepts_json_from_before_boost_upgrade() {
+        let pool = PumpSwapPool::default();
+        let json = without_fields(&pool, &["virtual_quote_reserves"]);
+
+        let decoded: PumpSwapPool = serde_json::from_value(json).expect("legacy pool JSON");
+        assert_eq!(decoded.virtual_quote_reserves, 0);
+    }
+
+    #[test]
+    fn meteora_dlmm_swap_accepts_json_from_before_context_fields() {
+        let event = MeteoraDlmmSwapEvent {
+            metadata: EventMetadata::default(),
+            token_x_mint: Pubkey::new_unique(),
+            token_y_mint: Pubkey::new_unique(),
+            user_token_in: Pubkey::new_unique(),
+            user_token_out: Pubkey::new_unique(),
+            min_amount_out: 9,
+            pool: Pubkey::new_unique(),
+            from: Pubkey::new_unique(),
+            start_bin_id: 1,
+            end_bin_id: 2,
+            amount_in: 3,
+            amount_out: 4,
+            swap_for_y: true,
+            fee: 5,
+            protocol_fee: 6,
+            fee_bps: 7,
+            host_fee: 8,
+        };
+        let json = without_fields(
+            &event,
+            &["token_x_mint", "token_y_mint", "user_token_in", "user_token_out", "min_amount_out"],
+        );
+
+        let decoded: MeteoraDlmmSwapEvent =
+            serde_json::from_value(json).expect("legacy Meteora DLMM swap JSON");
+        assert_eq!(decoded.token_x_mint, Pubkey::default());
+        assert_eq!(decoded.token_y_mint, Pubkey::default());
+        assert_eq!(decoded.user_token_in, Pubkey::default());
+        assert_eq!(decoded.user_token_out, Pubkey::default());
+        assert_eq!(decoded.min_amount_out, 0);
+    }
+
+    #[test]
+    fn pumpswap_json_preserves_signed_i128_extremes() {
+        for value in [i128::MIN, -1, i128::MAX] {
+            let event =
+                PumpSwapBuyEvent { virtual_quote_reserves: value, ..PumpSwapBuyEvent::default() };
+            let json = serde_json::to_string(&event).expect("serialize signed reserve");
+            let decoded: PumpSwapBuyEvent =
+                serde_json::from_str(&json).expect("deserialize signed reserve");
+            assert_eq!(decoded.virtual_quote_reserves, value);
+        }
+    }
 }

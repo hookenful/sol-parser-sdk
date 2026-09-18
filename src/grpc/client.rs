@@ -11,7 +11,6 @@ use super::deduper::TxDeduper;
 use super::subscribe_builder::{
     build_subscribe_request, build_subscribe_request_with_event_filter,
 };
-use super::transaction_meta::try_yellowstone_signature;
 use super::types::*;
 use crate::core::{now_micros, EventMetadata}; // 导入高性能时钟
 use crate::instr::read_pubkey_fast;
@@ -20,12 +19,7 @@ use crate::DexEvent;
 use crossbeam_queue::ArrayQueue;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
-use memchr::memmem;
-use once_cell::sync::Lazy;
-use solana_sdk::pubkey::Pubkey;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
@@ -34,8 +28,20 @@ use tokio::time::{Duration, Instant};
 use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
 use yellowstone_grpc_proto::prelude::*;
 
-static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
-    Lazy::new(|| memmem::Finder::new(b"Program data: "));
+static GRPC_DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn push_queue(queue: &ArrayQueue<DexEvent>, event: DexEvent) {
+    if queue.push(event).is_err() {
+        let dropped = GRPC_DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+        if dropped <= 10 || dropped.is_power_of_two() {
+            log::warn!(
+                target: "sol_parser_sdk::grpc",
+                "gRPC event queue is full; dropped event count={dropped}"
+            );
+        }
+    }
+}
 
 // ==================== YellowstoneGrpc 客户端 ====================
 
@@ -268,22 +274,13 @@ impl YellowstoneGrpc {
         let order_mode = self.config.order_mode;
         let timeout_ms = self.config.order_timeout_ms;
         let batch_us = self.config.micro_batch_us;
-        let check_interval = Duration::from_millis(timeout_ms / 2);
+        let check_interval = match order_mode {
+            OrderMode::MicroBatch => Duration::from_micros(batch_us.max(1)),
+            _ => Duration::from_millis((timeout_ms / 2).max(1)),
+        };
         let mut next_check = Instant::now() + check_interval;
 
         loop {
-            // Periodic timeout check for ordered modes and MicroBatch
-            self.check_timeout(
-                order_mode,
-                &mut slot_buffer,
-                &mut micro_batch,
-                queue,
-                timeout_ms,
-                batch_us,
-                &mut next_check,
-                check_interval,
-            );
-
             tokio::select! {
                 msg = stream.next() => {
                     match msg {
@@ -314,12 +311,22 @@ impl YellowstoneGrpc {
                         }
                         Some(Err(e)) => {
                             error!("Grpc Stream error: {:?}", e);
-                            self.flush_on_disconnect(order_mode, &mut slot_buffer, queue);
+                            self.flush_on_disconnect(
+                                order_mode,
+                                &mut slot_buffer,
+                                &mut micro_batch,
+                                queue,
+                            );
                             self.control_tx.lock().await.take();
                             return Err(e.to_string());
                         }
                         None => {
-                            self.flush_on_disconnect(order_mode, &mut slot_buffer, queue);
+                            self.flush_on_disconnect(
+                                order_mode,
+                                &mut slot_buffer,
+                                &mut micro_batch,
+                                queue,
+                            );
                             self.control_tx.lock().await.take();
                             return Ok(());
                         }
@@ -330,6 +337,18 @@ impl YellowstoneGrpc {
                         self.control_tx.lock().await.take();
                         return Err(e.to_string());
                     }
+                }
+                _ = tokio::time::sleep_until(next_check) => {
+                    self.check_timeout(
+                        order_mode,
+                        &mut slot_buffer,
+                        &mut micro_batch,
+                        queue,
+                        timeout_ms,
+                        batch_us,
+                        &mut next_check,
+                        check_interval,
+                    );
                 }
             }
         }
@@ -378,14 +397,14 @@ impl YellowstoneGrpc {
             OrderMode::Ordered => {
                 if slot_buf.should_timeout(timeout_ms) {
                     for e in slot_buf.flush_all() {
-                        let _ = queue.push(e);
+                        push_queue(queue, e);
                     }
                 }
             }
             OrderMode::StreamingOrdered => {
                 if slot_buf.should_timeout(timeout_ms) {
                     for e in slot_buf.flush_streaming_timeout() {
-                        let _ = queue.push(e);
+                        push_queue(queue, e);
                     }
                 }
             }
@@ -394,7 +413,7 @@ impl YellowstoneGrpc {
                 let now_us = get_timestamp_us();
                 if micro_buf.should_flush(now_us, batch_us) {
                     for e in micro_buf.flush() {
-                        let _ = queue.push(e);
+                        push_queue(queue, e);
                     }
                 }
             }
@@ -406,16 +425,17 @@ impl YellowstoneGrpc {
         &self,
         mode: OrderMode,
         buffer: &mut SlotBuffer,
+        micro_batch: &mut MicroBatchBuffer,
         queue: &Arc<ArrayQueue<DexEvent>>,
     ) {
-        if matches!(mode, OrderMode::Ordered | OrderMode::StreamingOrdered) {
-            let events = match mode {
-                OrderMode::StreamingOrdered => buffer.flush_streaming_timeout(),
-                _ => buffer.flush_all(),
-            };
-            for e in events {
-                let _ = queue.push(e);
-            }
+        let events = match mode {
+            OrderMode::Ordered => buffer.flush_all(),
+            OrderMode::StreamingOrdered => buffer.flush_streaming_timeout(),
+            OrderMode::MicroBatch => micro_batch.flush(),
+            OrderMode::Unordered => Vec::new(),
+        };
+        for event in events {
+            push_queue(queue, event);
         }
     }
 
@@ -480,7 +500,9 @@ impl YellowstoneGrpc {
 
         if let Some(deduper) = &self.tx_deduper {
             let Some(info) = tx.transaction.as_ref() else { return };
-            let sig = extract_signature(&info.signature);
+            let Some(sig) = crate::grpc::try_yellowstone_signature(&info.signature) else {
+                return;
+            };
             let log_enabled = log::log_enabled!(log::Level::Info);
             let log_label = deduper.log_label();
             let start_us = if log_enabled && log_label.is_some() { now_micros() } else { 0 };
@@ -503,13 +525,13 @@ impl YellowstoneGrpc {
                     Some(block_us),
                     filter.as_ref(),
                 ) {
-                    let _ = queue.push(e);
+                    push_queue(queue, e);
                 }
             }
             OrderMode::Ordered => {
                 if slot > *last_slot && *last_slot > 0 {
                     for e in slot_buf.flush_before(slot) {
-                        let _ = queue.push(e);
+                        push_queue(queue, e);
                     }
                 }
                 *last_slot = slot;
@@ -524,7 +546,7 @@ impl YellowstoneGrpc {
                     parse_transaction_to_vec(&tx, grpc_us, Some(block_us), filter.as_ref())
                 {
                     for evt in slot_buf.push_streaming(slot, idx, e) {
-                        let _ = queue.push(evt);
+                        push_queue(queue, evt);
                     }
                 }
             }
@@ -534,7 +556,7 @@ impl YellowstoneGrpc {
                 {
                     if micro_buf.push(slot, idx, e, grpc_us, batch_us) {
                         for evt in micro_buf.flush() {
-                            let _ = queue.push(evt);
+                            push_queue(queue, evt);
                         }
                     }
                 }
@@ -568,7 +590,7 @@ impl YellowstoneGrpc {
             recent_blockhash: None,
         };
         if let Some(e) = crate::accounts::parse_account_unified(&data, meta, filter.as_ref()) {
-            let _ = queue.push(e);
+            push_queue(queue, e);
         }
     }
 
@@ -597,7 +619,7 @@ impl YellowstoneGrpc {
             },
         });
         if filter.as_ref().map(|f| f.should_include_dex_event(&event)).unwrap_or(true) {
-            let _ = queue.push(event);
+            push_queue(queue, event);
         }
     }
 }
@@ -627,162 +649,21 @@ fn parse_transaction_to_vec(
     filter: Option<&EventTypeFilter>,
 ) -> Vec<(u64, DexEvent)> {
     let idx = tx.transaction.as_ref().map(|t| t.index).unwrap_or(0);
-    parse_transaction_core(tx, grpc_us, block_us, filter).into_iter().map(|e| (idx, e)).collect()
-}
-
-#[inline]
-fn parse_transaction_core(
-    tx: &SubscribeUpdateTransaction,
-    grpc_us: i64,
-    block_us: Option<i64>,
-    filter: Option<&EventTypeFilter>,
-) -> Vec<DexEvent> {
-    let Some(info) = &tx.transaction else { return Vec::new() };
-    let Some(meta) = &info.meta else { return Vec::new() };
-
-    let sig = extract_signature(&info.signature);
-    let slot = tx.slot;
-    let idx = info.index;
-
-    let log_events = parse_logs(
-        meta,
-        &info.transaction,
-        &meta.log_messages,
-        sig,
-        slot,
-        idx,
-        block_us,
-        grpc_us,
-        filter,
-    );
-    let instr_events =
-        parse_instructions(meta, &info.transaction, sig, slot, idx, block_us, grpc_us, filter);
-
-    let events =
-        crate::grpc::log_instr_dedup::dedupe_log_instruction_events(log_events, instr_events);
-    if let Some(filter) = filter {
-        events.into_iter().map(|e| filter.normalize_dex_event(e)).collect()
-    } else {
-        events
-    }
-}
-
-#[inline(always)]
-fn extract_signature(bytes: &[u8]) -> solana_sdk::signature::Signature {
-    try_yellowstone_signature(bytes).expect("yellowstone signature must be 64 bytes")
-}
-
-#[inline]
-fn parse_logs(
-    meta: &TransactionStatusMeta,
-    transaction: &Option<yellowstone_grpc_proto::prelude::Transaction>,
-    logs: &[String],
-    sig: solana_sdk::signature::Signature,
-    slot: u64,
-    tx_idx: u64,
-    block_us: Option<i64>,
-    grpc_us: i64,
-    filter: Option<&EventTypeFilter>,
-) -> Vec<DexEvent> {
-    let recent_blockhash = transaction.as_ref().and_then(|t| t.message.as_ref()).and_then(|m| {
-        if m.recent_blockhash.is_empty() {
-            None
-        } else {
-            Some(m.recent_blockhash.clone())
-        }
-    });
-
-    let needs_pumpfun = filter.map(|f| f.includes_pumpfun()).unwrap_or(true);
-    let has_create = needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(logs);
-
-    let mut outer_idx: i32 = -1;
-    let mut inner_idx: i32 = -1;
-    let mut invokes: HashMap<Pubkey, Vec<(i32, i32)>> = HashMap::with_capacity(8);
-    let mut active_program_stack: Vec<Pubkey> = Vec::with_capacity(8);
-    let mut result = Vec::with_capacity(4);
-
-    for log in logs {
-        if let Some((pid, depth)) = crate::logs::optimized_matcher::parse_invoke_info(log) {
-            if depth == 1 {
-                inner_idx = -1;
-                outer_idx += 1;
-            } else {
-                inner_idx += 1;
-            }
-            if let Ok(pk) = Pubkey::from_str(pid) {
-                active_program_stack.truncate(depth.saturating_sub(1));
-                active_program_stack.push(pk);
-                invokes.entry(pk).or_default().push((outer_idx, inner_idx));
-            }
-        }
-
-        if PROGRAM_DATA_FINDER.find(log.as_bytes()).is_some() {
-            let current_program = active_program_stack.last();
-            if let Some(mut e) = crate::logs::parse_log_with_program_id(
-                log,
-                sig,
-                slot,
-                tx_idx,
-                block_us,
-                grpc_us,
-                filter,
-                has_create,
-                recent_blockhash.as_deref(),
-                current_program,
-            ) {
-                crate::core::account_dispatcher::fill_accounts_with_owned_keys(
-                    &mut e,
-                    meta,
-                    transaction,
-                    &invokes,
-                );
-                crate::core::common_filler::fill_data(&mut e, meta, transaction, &invokes);
-                result.push(e);
-            }
-        }
-
-        if let Some(pid) = crate::logs::optimized_matcher::parse_program_complete_info(log) {
-            if let Ok(pk) = Pubkey::from_str(pid) {
-                if let Some(pos) = active_program_stack.iter().rposition(|active| *active == pk) {
-                    active_program_stack.truncate(pos);
-                }
-            }
-        }
-    }
-    result
-}
-
-#[inline]
-fn parse_instructions(
-    meta: &TransactionStatusMeta,
-    transaction: &Option<yellowstone_grpc_proto::prelude::Transaction>,
-    sig: solana_sdk::signature::Signature,
-    slot: u64,
-    tx_idx: u64,
-    block_us: Option<i64>,
-    grpc_us: i64,
-    filter: Option<&EventTypeFilter>,
-) -> Vec<DexEvent> {
-    // 使用增强的 instruction 解析器
-    // 支持：
-    // - 主指令解析（8字节 discriminator）
-    // - Inner instruction 解析（16字节 discriminator）
-    // - 自动事件合并（instruction + inner instruction）
-    crate::grpc::instruction_parser::parse_instructions_enhanced(
-        meta,
-        transaction,
-        sig,
-        slot,
-        tx_idx,
-        block_us,
-        grpc_us,
-        filter,
-    )
+    crate::grpc::parse_subscribe_update_transaction_low_latency(tx, grpc_us, block_us, filter)
+        .into_iter()
+        .map(|event| (idx, event))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_event(slot: u64) -> DexEvent {
+        DexEvent::BlockMeta(crate::core::events::BlockMetaEvent {
+            metadata: EventMetadata { slot, ..Default::default() },
+        })
+    }
 
     #[tokio::test]
     async fn update_subscription_remembers_filters_for_reconnect_even_without_active_stream() {
@@ -836,5 +717,28 @@ mod tests {
         assert!(grpc.stop_signal.lock().await.is_none());
         assert!(grpc.control_tx.lock().await.is_none());
         assert!(grpc.subscription_handle.lock().await.is_none());
+    }
+
+    #[test]
+    fn micro_batch_is_flushed_on_disconnect() {
+        let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_string(), None).unwrap();
+        let queue = Arc::new(ArrayQueue::new(2));
+        let mut slot_buffer = SlotBuffer::new();
+        let mut micro_batch = MicroBatchBuffer::new();
+        assert!(!micro_batch.push(7, 0, test_event(7), 10, 100));
+
+        grpc.flush_on_disconnect(OrderMode::MicroBatch, &mut slot_buffer, &mut micro_batch, &queue);
+
+        assert!(micro_batch.is_empty());
+        assert!(matches!(queue.pop(), Some(DexEvent::BlockMeta(_))));
+    }
+
+    #[test]
+    fn full_queue_increments_drop_counter() {
+        let queue = ArrayQueue::new(1);
+        push_queue(&queue, test_event(1));
+        let before = GRPC_DROPPED_EVENTS.load(Ordering::Relaxed);
+        push_queue(&queue, test_event(2));
+        assert_eq!(GRPC_DROPPED_EVENTS.load(Ordering::Relaxed), before + 1);
     }
 }

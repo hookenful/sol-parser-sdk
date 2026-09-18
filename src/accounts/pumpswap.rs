@@ -33,8 +33,11 @@ pub const GLOBAL_CONFIG_SIZE: usize = 32 + 8 + 8 + 1 + 32 * 8 + 8 + 32;
 /// - 32  bytes coin_creator
 /// - 1   byte  is_mayhem_mode
 /// - 1   byte  is_cashback_coin
-/// - 7   bytes reserved
-pub const POOL_SIZE: usize = 244;
+/// - 16  bytes virtual_quote_reserves (current layout only)
+pub const POOL_LEGACY_SIZE: usize = 244;
+pub const POOL_BOOST_SIZE: usize = 253;
+pub const POOL_CREATOR_FEE_SIZE: usize = 262;
+pub const POOL_SIZE: usize = 263;
 
 /// 解析 PumpSwap Global Config 账户
 ///
@@ -135,7 +138,15 @@ pub fn parse_global_config(account: &AccountData, metadata: EventMetadata) -> Op
 /// 返回 `Some(DexEvent::PumpSwapPoolAccount)` 如果解析成功，否则返回 `None`
 pub fn parse_pool(account: &AccountData, metadata: EventMetadata) -> Option<DexEvent> {
     // 检查账户数据长度（discriminator + data）
-    if account.data.len() < POOL_SIZE + 8 {
+    if account.data.len() < POOL_LEGACY_SIZE + 8 {
+        return None;
+    }
+    let body_len = account.data.len() - 8;
+    if body_len != POOL_LEGACY_SIZE
+        && body_len != POOL_BOOST_SIZE
+        && body_len != POOL_CREATOR_FEE_SIZE
+        && body_len < POOL_SIZE
+    {
         return None;
     }
 
@@ -182,6 +193,19 @@ pub fn parse_pool(account: &AccountData, metadata: EventMetadata) -> Option<DexE
     offset += 1;
 
     let is_cashback_coin = read_u8(data, offset)? != 0;
+    offset += 1;
+
+    let virtual_quote_reserves = data
+        .get(offset..offset + 16)
+        .map(|bytes| i128::from_le_bytes(bytes.try_into().expect("checked i128 slice")))
+        .unwrap_or_default();
+    offset += 16;
+
+    let creator_fee_bps = read_u64_le(data, offset).unwrap_or_default();
+    offset += 8;
+    let can_edit_creator_fee = read_u8(data, offset).unwrap_or_default() != 0;
+    offset += 1;
+    let is_holder_reward = read_u8(data, offset).unwrap_or_default() != 0;
 
     let pool = PumpSwapPool {
         pool_bump,
@@ -196,6 +220,10 @@ pub fn parse_pool(account: &AccountData, metadata: EventMetadata) -> Option<DexE
         coin_creator,
         is_mayhem_mode,
         is_cashback_coin,
+        virtual_quote_reserves,
+        creator_fee_bps,
+        can_edit_creator_fee,
+        is_holder_reward,
     };
 
     Some(DexEvent::PumpSwapPoolAccount(PumpSwapPoolAccountEvent {
@@ -224,56 +252,113 @@ mod tests {
     use super::*;
     use solana_sdk::pubkey::Pubkey;
 
-    #[test]
-    fn parse_pool_reads_mayhem_and_cashback_flags() {
-        let pubkeys = [
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-        ];
-        let mut data = Vec::with_capacity(8 + POOL_SIZE);
+    fn pool_account(virtual_quote_reserves: Option<i128>, allocated_len: usize) -> AccountData {
+        let mut data = Vec::with_capacity(allocated_len);
         data.extend_from_slice(discriminators::POOL_ACCOUNT);
         data.push(7); // pool_bump
         data.extend_from_slice(&42u16.to_le_bytes()); // index
-        for key in pubkeys {
+        for seed in 1..=6 {
+            let key = Pubkey::new_from_array([seed; 32]);
             data.extend_from_slice(key.as_ref());
         }
         data.extend_from_slice(&123456789u64.to_le_bytes()); // lp_supply
-        let coin_creator = Pubkey::new_unique();
+        let coin_creator = Pubkey::new_from_array([7; 32]);
         data.extend_from_slice(coin_creator.as_ref());
         data.push(1); // is_mayhem_mode
         data.push(1); // is_cashback_coin
-        data.extend_from_slice(&[0u8; 7]); // reserved
+        if let Some(value) = virtual_quote_reserves {
+            data.extend_from_slice(&value.to_le_bytes());
+        } else {
+            data.extend_from_slice(&[0u8; 7]); // legacy reserved tail
+        }
+        data.resize(allocated_len, 0);
 
-        let account = AccountData {
+        AccountData {
             pubkey: Pubkey::new_unique(),
             owner: Pubkey::new_unique(),
             data,
             executable: false,
             lamports: 1,
             rent_epoch: 0,
-        };
-        let metadata = EventMetadata::default();
+        }
+    }
 
-        let event = parse_pool(&account, metadata).expect("pool account should parse");
+    fn parsed_pool(account: &AccountData) -> PumpSwapPool {
+        let event =
+            parse_pool(account, EventMetadata::default()).expect("pool account should parse");
         let DexEvent::PumpSwapPoolAccount(event) = event else {
             panic!("expected PumpSwapPoolAccount");
         };
+        event.pool
+    }
 
-        assert_eq!(event.pool.pool_bump, 7);
-        assert_eq!(event.pool.index, 42);
-        assert_eq!(event.pool.creator, pubkeys[0]);
-        assert_eq!(event.pool.base_mint, pubkeys[1]);
-        assert_eq!(event.pool.quote_mint, pubkeys[2]);
-        assert_eq!(event.pool.lp_mint, pubkeys[3]);
-        assert_eq!(event.pool.pool_base_token_account, pubkeys[4]);
-        assert_eq!(event.pool.pool_quote_token_account, pubkeys[5]);
-        assert_eq!(event.pool.lp_supply, 123456789);
-        assert_eq!(event.pool.coin_creator, coin_creator);
-        assert!(event.pool.is_mayhem_mode);
-        assert!(event.pool.is_cashback_coin);
+    #[test]
+    fn parse_boost_261_byte_pool_reads_virtual_reserves() {
+        let account = pool_account(Some(-987_654_321), 8 + POOL_BOOST_SIZE);
+        let pool = parsed_pool(&account);
+
+        assert_eq!(account.data.len(), 261);
+        assert_eq!(pool.pool_bump, 7);
+        assert_eq!(pool.index, 42);
+        assert_eq!(pool.creator, Pubkey::new_from_array([1; 32]));
+        assert_eq!(pool.lp_supply, 123456789);
+        assert!(pool.is_mayhem_mode);
+        assert!(pool.is_cashback_coin);
+        assert_eq!(pool.virtual_quote_reserves, -987_654_321);
+        assert_eq!(pool.creator_fee_bps, 0);
+        assert!(!pool.can_edit_creator_fee);
+        assert!(!pool.is_holder_reward);
+    }
+
+    #[test]
+    fn parse_current_271_byte_pool_reads_creator_fee_fields() {
+        let mut account = pool_account(Some(-987_654_321), 8 + POOL_SIZE);
+        account.data[261..269].copy_from_slice(&250u64.to_le_bytes());
+        account.data[269] = 1;
+        account.data[270] = 1;
+        let pool = parsed_pool(&account);
+
+        assert_eq!(account.data.len(), 271);
+        assert_eq!(pool.virtual_quote_reserves, -987_654_321);
+        assert_eq!(pool.creator_fee_bps, 250);
+        assert!(pool.can_edit_creator_fee);
+        assert!(pool.is_holder_reward);
+    }
+
+    #[test]
+    fn parse_creator_fee_270_byte_pool_defaults_holder_reward() {
+        let mut account = pool_account(Some(-987_654_321), 8 + POOL_CREATOR_FEE_SIZE);
+        account.data[261..269].copy_from_slice(&250u64.to_le_bytes());
+        account.data[269] = 1;
+        let pool = parsed_pool(&account);
+
+        assert_eq!(pool.creator_fee_bps, 250);
+        assert!(pool.can_edit_creator_fee);
+        assert!(!pool.is_holder_reward);
+    }
+
+    #[test]
+    fn parse_300_byte_pool_reads_virtual_reserves() {
+        let account = pool_account(Some(987_654_321), 300);
+        let pool = parsed_pool(&account);
+
+        assert_eq!(pool.virtual_quote_reserves, 987_654_321);
+    }
+
+    #[test]
+    fn parse_legacy_252_byte_pool_defaults_virtual_reserves() {
+        let account = pool_account(None, 8 + POOL_LEGACY_SIZE);
+        let pool = parsed_pool(&account);
+
+        assert_eq!(account.data.len(), 252);
+        assert_eq!(pool.virtual_quote_reserves, 0);
+    }
+
+    #[test]
+    fn parse_pool_rejects_partial_current_layout() {
+        for body_len in (245..253).chain(254..262) {
+            let account = pool_account(Some(987_654_321), 8 + body_len);
+            assert!(parse_pool(&account, EventMetadata::default()).is_none());
+        }
     }
 }

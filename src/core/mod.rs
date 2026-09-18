@@ -13,6 +13,7 @@ pub mod cache;
 pub mod clock; // 高性能时钟 - 微秒级时间戳获取
 pub mod common_filler;
 pub mod events; // 事件定义
+pub(crate) mod invoke_context;
 pub mod merger; // 事件合并器 - instruction + inner instruction
 pub mod pumpfun_fee_enrich; // 同 tx Pump 后处理：CreateV2 fee 回填、Create→Trade cashback/mayhem（零 RPC）
 pub mod unified_parser; // 统一解析器 - 单一入口 // 解析器缓存 - 减少内存分配

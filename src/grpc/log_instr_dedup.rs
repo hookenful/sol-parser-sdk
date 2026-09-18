@@ -42,6 +42,7 @@ enum LogInstrDedupKey {
         pool: Pubkey,
         user: Pubkey,
         is_buy: bool,
+        occurrence: u16,
     },
     RaydiumLaunchlabPoolCreate {
         pool: Pubkey,
@@ -81,16 +82,26 @@ enum LogInstrDedupKey {
     /// `sender` 可能仅 ix 填全，不参与键以免与 log 配对失败。
     RaydiumClmmSwap {
         pool: Pubkey,
-        zero_for_one: bool,
+        occurrence: u16,
     },
-    /// 仅 `amm`：用户 ATA 常仅一路有，用 amm+ATA 会导致无法去重。
+    RaydiumCpmmSwap {
+        pool: Pubkey,
+        occurrence: u16,
+    },
     RaydiumAmmV4Swap {
-        amm: Pubkey,
+        base_out: bool,
+        instruction_amount: u64,
+        occurrence: u16,
+    },
+    OrcaWhirlpoolSwap {
+        whirlpool: Pubkey,
+        occurrence: u16,
     },
     MeteoraDlmmSwap {
         pool: Pubkey,
         from: Pubkey,
         swap_for_y: bool,
+        occurrence: u16,
     },
 }
 
@@ -108,7 +119,24 @@ fn pumpswap_ix_lane(ix_name: &str) -> u8 {
     pumpfun_ix_lane(ix_name)
 }
 
-type PumpFunLaneBase = (Pubkey, Pubkey, bool, u8);
+#[derive(Clone, Hash, PartialEq, Eq)]
+enum OccurrenceBase {
+    PumpFun { mint: Pubkey, user: Pubkey, is_buy: bool, lane: u8 },
+    RaydiumLaunchlab { pool: Pubkey, user: Pubkey, is_buy: bool },
+    RaydiumClmm(Pubkey),
+    RaydiumCpmm(Pubkey),
+    RaydiumAmmV4 { base_out: bool, amount: u64 },
+    OrcaWhirlpool(Pubkey),
+    MeteoraDlmm { pool: Pubkey, from: Pubkey, swap_for_y: bool },
+}
+
+#[inline]
+fn next_occurrence(base: OccurrenceBase, counts: &mut HashMap<OccurrenceBase, u16>) -> u16 {
+    let entry = counts.entry(base).or_insert(0);
+    let occurrence = *entry;
+    *entry = occurrence.saturating_add(1);
+    occurrence
+}
 
 #[inline]
 fn pumpfun_trade_key_with_occ(
@@ -138,6 +166,7 @@ fn log_instr_dedup_key(ev: &DexEvent) -> Option<LogInstrDedupKey> {
             pool: t.pool_state,
             user: t.user,
             is_buy: t.is_buy,
+            occurrence: 0,
         }),
         RaydiumLaunchlabPoolCreate(p) => {
             Some(LogInstrDedupKey::RaydiumLaunchlabPoolCreate { pool: p.pool_state })
@@ -166,41 +195,93 @@ fn log_instr_dedup_key(ev: &DexEvent) -> Option<LogInstrDedupKey> {
         PumpSwapLiquidityRemoved(r) => {
             Some(LogInstrDedupKey::PumpSwapLiquidityRemoved { pool: r.pool, user: r.user })
         }
-        RaydiumClmmSwap(s) => Some(LogInstrDedupKey::RaydiumClmmSwap {
-            pool: s.pool_state,
-            zero_for_one: s.zero_for_one,
-        }),
-        // CPMM swap 事件体无用户/ATA，仅用池+金额去重会误伤多用户同额；不参与 log/ix 折叠。
-        RaydiumCpmmSwap(_) => None,
-        RaydiumAmmV4Swap(s) => Some(LogInstrDedupKey::RaydiumAmmV4Swap { amm: s.amm }),
-        // Orca swap 事件体当前无 token authority / 用户 ATA 字段，无法安全区分用户。
+        RaydiumClmmSwap(_) => None,
+        RaydiumCpmmSwap(_) | RaydiumAmmV4Swap(_) => None,
         OrcaWhirlpoolSwap(_) => None,
         MeteoraDammV2Swap(_) => None,
-        MeteoraDlmmSwap(s) => Some(LogInstrDedupKey::MeteoraDlmmSwap {
-            pool: s.pool,
-            from: s.from,
-            swap_for_y: s.swap_for_y,
-        }),
+        MeteoraDlmmSwap(_) => None,
         // 无稳定链上指纹或其它路径：不去重
         _ => None,
     }
 }
 
 #[inline]
-fn next_pumpfun_dedup_key(
+fn next_dedup_key(
     ev: &DexEvent,
-    lane_count: &mut HashMap<PumpFunLaneBase, u16>,
+    occurrence_counts: &mut HashMap<OccurrenceBase, u16>,
 ) -> Option<LogInstrDedupKey> {
+    let occurrence =
+        occurrence_base(ev).map(|base| next_occurrence(base, occurrence_counts)).unwrap_or(0);
+    dedup_key_with_occurrence(ev, occurrence)
+}
+
+#[inline]
+fn occurrence_base(ev: &DexEvent) -> Option<OccurrenceBase> {
     use DexEvent::*;
     match ev {
         PumpFunTrade(t) | PumpFunBuy(t) | PumpFunSell(t) | PumpFunBuyExactSolIn(t) => {
             let lane = pumpfun_ix_lane(t.ix_name.as_str());
-            let base = (t.mint, t.user, t.is_buy, lane);
-            let entry = lane_count.entry(base).or_insert(0);
-            let occ = *entry;
-            *entry = occ.saturating_add(1);
-            Some(pumpfun_trade_key_with_occ(t, occ))
+            Some(OccurrenceBase::PumpFun { mint: t.mint, user: t.user, is_buy: t.is_buy, lane })
         }
+        RaydiumLaunchlabTrade(t) => Some(OccurrenceBase::RaydiumLaunchlab {
+            pool: t.pool_state,
+            user: t.user,
+            is_buy: t.is_buy,
+        }),
+        RaydiumClmmSwap(s) => Some(OccurrenceBase::RaydiumClmm(s.pool_state)),
+        RaydiumCpmmSwap(s) => Some(OccurrenceBase::RaydiumCpmm(s.pool_id)),
+        RaydiumAmmV4Swap(s) => {
+            let base_out = s.max_amount_in != 0;
+            let amount = if base_out { s.amount_out } else { s.amount_in };
+            Some(OccurrenceBase::RaydiumAmmV4 { base_out, amount })
+        }
+        OrcaWhirlpoolSwap(s) => Some(OccurrenceBase::OrcaWhirlpool(s.whirlpool)),
+        MeteoraDlmmSwap(s) => Some(OccurrenceBase::MeteoraDlmm {
+            pool: s.pool,
+            from: s.from,
+            swap_for_y: s.swap_for_y,
+        }),
+        _ => None,
+    }
+}
+
+#[inline]
+fn dedup_key_with_occurrence(ev: &DexEvent, occurrence: u16) -> Option<LogInstrDedupKey> {
+    use DexEvent::*;
+    match ev {
+        PumpFunTrade(t) | PumpFunBuy(t) | PumpFunSell(t) | PumpFunBuyExactSolIn(t) => {
+            Some(pumpfun_trade_key_with_occ(t, occurrence))
+        }
+        RaydiumLaunchlabTrade(t) => Some(LogInstrDedupKey::RaydiumLaunchlabTrade {
+            pool: t.pool_state,
+            user: t.user,
+            is_buy: t.is_buy,
+            occurrence,
+        }),
+        RaydiumClmmSwap(s) => {
+            Some(LogInstrDedupKey::RaydiumClmmSwap { pool: s.pool_state, occurrence })
+        }
+        RaydiumCpmmSwap(s) => {
+            Some(LogInstrDedupKey::RaydiumCpmmSwap { pool: s.pool_id, occurrence })
+        }
+        RaydiumAmmV4Swap(s) => {
+            let base_out = s.max_amount_in != 0;
+            let amount = if base_out { s.amount_out } else { s.amount_in };
+            Some(LogInstrDedupKey::RaydiumAmmV4Swap {
+                base_out,
+                instruction_amount: amount,
+                occurrence,
+            })
+        }
+        OrcaWhirlpoolSwap(s) => {
+            Some(LogInstrDedupKey::OrcaWhirlpoolSwap { whirlpool: s.whirlpool, occurrence })
+        }
+        MeteoraDlmmSwap(s) => Some(LogInstrDedupKey::MeteoraDlmmSwap {
+            pool: s.pool,
+            from: s.from,
+            swap_for_y: s.swap_for_y,
+            occurrence,
+        }),
         _ => log_instr_dedup_key(ev),
     }
 }
@@ -210,13 +291,37 @@ pub(crate) fn dedupe_log_instruction_events(
     log_events: Vec<DexEvent>,
     instr_events: Vec<DexEvent>,
 ) -> Vec<DexEvent> {
+    if instr_events.is_empty() || (log_events.is_empty() && instr_events.len() == 1) {
+        let mut out = if instr_events.is_empty() { log_events } else { instr_events };
+        crate::core::pumpfun_fee_enrich::enrich_pumpfun_same_tx_post_merge(&mut out);
+        return out;
+    }
+
+    if log_events.len() == 1 && instr_events.len() == 1 {
+        let mut log_event = log_events.into_iter().next().expect("length checked");
+        let instr_event = instr_events.into_iter().next().expect("length checked");
+        let same_key = dedup_key_with_occurrence(&log_event, 0)
+            .zip(dedup_key_with_occurrence(&instr_event, 0))
+            .is_some_and(|(log_key, instr_key)| log_key == instr_key);
+        let mut out = Vec::with_capacity(if same_key { 1 } else { 2 });
+        if same_key {
+            crate::core::merger::merge_grpc_instruction_into_log(&mut log_event, instr_event);
+            out.push(log_event);
+        } else {
+            out.push(log_event);
+            out.push(instr_event);
+        }
+        crate::core::pumpfun_fee_enrich::enrich_pumpfun_same_tx_post_merge(&mut out);
+        return out;
+    }
+
     let cap = log_events.len().saturating_add(instr_events.len());
     let mut out: Vec<DexEvent> = Vec::with_capacity(cap);
     let mut idx_by_key: HashMap<LogInstrDedupKey, usize> = HashMap::new();
-    let mut pump_lane_log: HashMap<PumpFunLaneBase, u16> = HashMap::new();
+    let mut log_occurrences: HashMap<OccurrenceBase, u16> = HashMap::new();
 
     for e in log_events {
-        if let Some(k) = next_pumpfun_dedup_key(&e, &mut pump_lane_log) {
+        if let Some(k) = next_dedup_key(&e, &mut log_occurrences) {
             idx_by_key.insert(k, out.len());
             out.push(e);
         } else {
@@ -224,9 +329,9 @@ pub(crate) fn dedupe_log_instruction_events(
         }
     }
 
-    let mut pump_lane_ix: HashMap<PumpFunLaneBase, u16> = HashMap::new();
+    let mut ix_occurrences: HashMap<OccurrenceBase, u16> = HashMap::new();
     for e in instr_events {
-        if let Some(k) = next_pumpfun_dedup_key(&e, &mut pump_lane_ix) {
+        if let Some(k) = next_dedup_key(&e, &mut ix_occurrences) {
             if let Some(&idx) = idx_by_key.get(&k) {
                 crate::core::merger::merge_grpc_instruction_into_log(&mut out[idx], e);
             } else {
@@ -246,6 +351,7 @@ mod tests {
     use super::*;
     use crate::core::events::{
         EventMetadata, PumpFunCreateTokenEvent, PumpFunCreateV2TokenEvent, PumpFunTradeEvent,
+        PumpSwapCreatePoolEvent, RaydiumLaunchlabTradeEvent, TradeDirection,
     };
     use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
@@ -307,6 +413,105 @@ mod tests {
         }
     }
 
+    fn clmm_swap(pool: Pubkey, zero_for_one: bool, amount_0: u64) -> DexEvent {
+        DexEvent::RaydiumClmmSwap(crate::core::events::RaydiumClmmSwapEvent {
+            metadata: dummy_meta(),
+            pool_state: pool,
+            sender: Pubkey::default(),
+            token_account_0: Pubkey::default(),
+            token_account_1: Pubkey::default(),
+            amount_0,
+            transfer_fee_0: 0,
+            amount_1: 0,
+            transfer_fee_1: 0,
+            zero_for_one,
+            sqrt_price_x64: 0,
+            liquidity: 0,
+            tick: 0,
+        })
+    }
+
+    #[test]
+    fn clmm_log_ix_dedup_ignores_instruction_placeholder_direction() {
+        let pool = Pubkey::new_unique();
+        let merged = dedupe_log_instruction_events(
+            vec![clmm_swap(pool, false, 123)],
+            vec![clmm_swap(pool, true, 0)],
+        );
+        assert_eq!(merged.len(), 1);
+        match &merged[0] {
+            DexEvent::RaydiumClmmSwap(s) => {
+                assert_eq!(s.amount_0, 123);
+                assert!(!s.zero_for_one);
+            }
+            other => panic!("expected RaydiumClmmSwap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clmm_same_pool_occurrences_are_retained() {
+        let pool = Pubkey::new_unique();
+        let merged = dedupe_log_instruction_events(
+            vec![clmm_swap(pool, false, 1), clmm_swap(pool, true, 2)],
+            vec![clmm_swap(pool, true, 0), clmm_swap(pool, false, 0)],
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    fn launchlab_trade(pool: Pubkey, user: Pubkey, amount_in: u64, quote_mint: Pubkey) -> DexEvent {
+        DexEvent::RaydiumLaunchlabTrade(RaydiumLaunchlabTradeEvent {
+            metadata: dummy_meta(),
+            pool_state: pool,
+            user,
+            amount_in,
+            amount_out: amount_in.saturating_mul(2),
+            is_buy: true,
+            trade_direction: TradeDirection::Buy,
+            exact_in: true,
+            global_config: Pubkey::default(),
+            platform_config: Pubkey::default(),
+            user_base_token: Pubkey::default(),
+            user_quote_token: Pubkey::default(),
+            base_vault: Pubkey::default(),
+            quote_vault: Pubkey::default(),
+            base_mint: Pubkey::default(),
+            quote_mint,
+            base_token_program: Pubkey::default(),
+            quote_token_program: Pubkey::default(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn launchlab_same_pool_occurrences_are_retained_and_enriched_in_order() {
+        let pool = Pubkey::new_unique();
+        let user = Pubkey::new_unique();
+        let first_quote_mint = Pubkey::new_unique();
+        let second_quote_mint = Pubkey::new_unique();
+        let merged = dedupe_log_instruction_events(
+            vec![
+                launchlab_trade(pool, user, 100, Pubkey::default()),
+                launchlab_trade(pool, user, 200, Pubkey::default()),
+            ],
+            vec![
+                launchlab_trade(pool, user, 9_999, first_quote_mint),
+                launchlab_trade(pool, user, 8_888, second_quote_mint),
+            ],
+        );
+
+        assert_eq!(merged.len(), 2);
+        let DexEvent::RaydiumLaunchlabTrade(first) = &merged[0] else {
+            unreachable!();
+        };
+        let DexEvent::RaydiumLaunchlabTrade(second) = &merged[1] else {
+            unreachable!();
+        };
+        assert_eq!(first.amount_in, 100);
+        assert_eq!(first.quote_mint, first_quote_mint);
+        assert_eq!(second.amount_in, 200);
+        assert_eq!(second.quote_mint, second_quote_mint);
+    }
+
     #[test]
     fn pumpfun_create_and_create_v2_same_mint_collapse() {
         let mint = Pubkey::new_unique();
@@ -359,6 +564,49 @@ mod tests {
                 assert!(e.is_cashback_enabled);
             }
             other => panic!("expected PumpFunCreate canonical event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pumpswap_create_pool_log_merge_keeps_instruction_cashback_flag() {
+        let pool = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let coin_creator = Pubkey::new_unique();
+
+        let log_create = PumpSwapCreatePoolEvent {
+            metadata: dummy_meta(),
+            pool,
+            base_mint,
+            quote_mint,
+            is_cashback_coin: false,
+            ..Default::default()
+        };
+        let ix_create = PumpSwapCreatePoolEvent {
+            metadata: dummy_meta(),
+            pool,
+            base_mint,
+            quote_mint,
+            coin_creator,
+            is_cashback_coin: true,
+            ..Default::default()
+        };
+
+        let merged = dedupe_log_instruction_events(
+            vec![DexEvent::PumpSwapCreatePool(log_create)],
+            vec![DexEvent::PumpSwapCreatePool(ix_create)],
+        );
+
+        assert_eq!(merged.len(), 1);
+        match &merged[0] {
+            DexEvent::PumpSwapCreatePool(e) => {
+                assert_eq!(e.pool, pool);
+                assert_eq!(e.base_mint, base_mint);
+                assert_eq!(e.quote_mint, quote_mint);
+                assert_eq!(e.coin_creator, coin_creator);
+                assert!(e.is_cashback_coin);
+            }
+            other => panic!("expected PumpSwapCreatePool, got {other:?}"),
         }
     }
 

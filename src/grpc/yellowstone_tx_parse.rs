@@ -1,11 +1,7 @@
 //! Yellowstone `SubscribeUpdateTransaction` 单笔解析（logs ∥ instructions + 去重）。
 //! 从 [`super::client`] 抽出，供 crate 内与下游 streamer 复用。
 
-use std::collections::HashMap;
-use std::str::FromStr;
-
-use memchr::memmem;
-use once_cell::sync::Lazy;
+use smallvec::SmallVec;
 use solana_sdk::pubkey::Pubkey;
 use yellowstone_grpc_proto::prelude::{
     SubscribeUpdateTransaction, Transaction, TransactionStatusMeta,
@@ -15,8 +11,12 @@ use super::transaction_meta::try_yellowstone_signature;
 use super::types::EventTypeFilter;
 use crate::DexEvent;
 
-static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
-    Lazy::new(|| memmem::Finder::new(b"Program data: "));
+const PROGRAM_DATA_PREFIX: &[u8] = b"Program data: ";
+
+struct ActiveProgram<'a> {
+    encoded: &'a str,
+    pubkey: Pubkey,
+}
 
 /// 解析单笔 Yellowstone 交易更新（含 meta）：并行 logs + enhanced instructions，再 log/ix 去重合并。
 #[inline]
@@ -39,9 +39,14 @@ pub(crate) fn parse_transaction_core(
     let Some(info) = &tx.transaction else { return Vec::new() };
     let Some(meta) = &info.meta else { return Vec::new() };
 
-    let sig = extract_signature(&info.signature);
+    let Some(sig) = try_yellowstone_signature(&info.signature) else {
+        return Vec::new();
+    };
     let slot = tx.slot;
     let idx = info.index;
+    let needs_pumpfun = filter.map(EventTypeFilter::includes_pumpfun).unwrap_or(true);
+    let is_created_buy =
+        needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
 
     let (log_events, instr_events) = rayon::join(
         || {
@@ -55,13 +60,30 @@ pub(crate) fn parse_transaction_core(
                 block_us,
                 grpc_us,
                 filter,
+                is_created_buy,
             )
         },
-        || parse_instructions(meta, &info.transaction, sig, slot, idx, block_us, grpc_us, filter),
+        || {
+            parse_instructions(
+                meta,
+                &info.transaction,
+                sig,
+                slot,
+                idx,
+                block_us,
+                grpc_us,
+                filter,
+                is_created_buy,
+            )
+        },
     );
 
-    let events =
+    let mut events =
         crate::grpc::log_instr_dedup::dedupe_log_instruction_events(log_events, instr_events);
+    crate::grpc::transaction_meta::fill_recent_blockhash(&mut events, &info.transaction);
+    for event in &mut events {
+        crate::core::common_filler::fill_token_balances(event, meta, &info.transaction);
+    }
     if let Some(filter) = filter {
         events.into_iter().map(|e| filter.normalize_dex_event(e)).collect()
     } else {
@@ -97,9 +119,14 @@ fn parse_transaction_core_sequential(
         return Vec::new();
     };
 
-    let sig = extract_signature(&info.signature);
+    let Some(sig) = try_yellowstone_signature(&info.signature) else {
+        return Vec::new();
+    };
     let slot = tx.slot;
     let idx = info.index;
+    let needs_pumpfun = filter.map(EventTypeFilter::includes_pumpfun).unwrap_or(true);
+    let is_created_buy =
+        needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
 
     let log_events = parse_logs(
         meta,
@@ -111,22 +138,31 @@ fn parse_transaction_core_sequential(
         block_us,
         grpc_us,
         filter,
+        is_created_buy,
     );
-    let instr_events =
-        parse_instructions(meta, &info.transaction, sig, slot, idx, block_us, grpc_us, filter);
+    let instr_events = parse_instructions(
+        meta,
+        &info.transaction,
+        sig,
+        slot,
+        idx,
+        block_us,
+        grpc_us,
+        filter,
+        is_created_buy,
+    );
 
-    let events =
+    let mut events =
         crate::grpc::log_instr_dedup::dedupe_log_instruction_events(log_events, instr_events);
+    crate::grpc::transaction_meta::fill_recent_blockhash(&mut events, &info.transaction);
+    for event in &mut events {
+        crate::core::common_filler::fill_token_balances(event, meta, &info.transaction);
+    }
     if let Some(filter) = filter {
         events.into_iter().map(|e| filter.normalize_dex_event(e)).collect()
     } else {
         events
     }
-}
-
-#[inline(always)]
-pub(crate) fn extract_signature(bytes: &[u8]) -> solana_sdk::signature::Signature {
-    try_yellowstone_signature(bytes).expect("yellowstone signature must be 64 bytes")
 }
 
 #[inline]
@@ -140,41 +176,17 @@ fn parse_logs(
     block_us: Option<i64>,
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
+    is_created_buy: bool,
 ) -> Vec<DexEvent> {
-    let recent_blockhash = transaction.as_ref().and_then(|t| t.message.as_ref()).and_then(|m| {
-        if m.recent_blockhash.is_empty() {
-            None
-        } else {
-            Some(m.recent_blockhash.clone())
-        }
-    });
-
-    let needs_pumpfun = filter.map(|f| f.includes_pumpfun()).unwrap_or(true);
-    let has_create = needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(logs);
-
     let mut outer_idx: i32 = -1;
     let mut inner_idx: i32 = -1;
-    let mut invokes: HashMap<Pubkey, Vec<(i32, i32)>> = HashMap::with_capacity(8);
-    let mut active_program_stack: Vec<Pubkey> = Vec::with_capacity(8);
+    let mut invokes = crate::core::invoke_context::InvokeContext::default();
+    let mut active_program_stack: SmallVec<[ActiveProgram<'_>; 8]> = SmallVec::new();
     let mut result = Vec::with_capacity(4);
 
     for log in logs {
-        if let Some((pid, depth)) = crate::logs::optimized_matcher::parse_invoke_info(log) {
-            if depth == 1 {
-                inner_idx = -1;
-                outer_idx += 1;
-            } else {
-                inner_idx += 1;
-            }
-            if let Ok(pk) = Pubkey::from_str(pid) {
-                active_program_stack.truncate(depth.saturating_sub(1));
-                active_program_stack.push(pk);
-                invokes.entry(pk).or_default().push((outer_idx, inner_idx));
-            }
-        }
-
-        if PROGRAM_DATA_FINDER.find(log.as_bytes()).is_some() {
-            let current_program = active_program_stack.last();
+        if log.as_bytes().starts_with(PROGRAM_DATA_PREFIX) {
+            let current_program = active_program_stack.last().map(|active| &active.pubkey);
             if let Some(mut e) = crate::logs::parse_log_with_program_id(
                 log,
                 sig,
@@ -183,26 +195,47 @@ fn parse_logs(
                 block_us,
                 grpc_us,
                 filter,
-                has_create,
-                recent_blockhash.as_deref(),
+                is_created_buy,
+                None,
                 current_program,
             ) {
-                crate::core::account_dispatcher::fill_accounts_with_owned_keys(
+                crate::core::account_dispatcher::fill_accounts_with_invoke_context(
                     &mut e,
                     meta,
                     transaction,
                     &invokes,
                 );
-                crate::core::common_filler::fill_data(&mut e, meta, transaction, &invokes);
+                crate::core::common_filler::fill_data_with_invoke_context(
+                    &mut e,
+                    meta,
+                    transaction,
+                    &invokes,
+                );
                 result.push(e);
             }
+            continue;
+        }
+
+        if let Some((pid, depth)) = crate::logs::optimized_matcher::parse_invoke_info(log) {
+            if depth == 1 {
+                inner_idx = -1;
+                outer_idx += 1;
+            } else {
+                inner_idx += 1;
+            }
+            let pk = crate::grpc::program_ids::known_program_id(pid).unwrap_or_default();
+            active_program_stack.truncate(depth - 1);
+            active_program_stack.push(ActiveProgram { encoded: pid, pubkey: pk });
+            if crate::grpc::program_ids::needs_invoke_context(&pk) {
+                invokes.push(pk, (outer_idx, inner_idx));
+            }
+            continue;
         }
 
         if let Some(pid) = crate::logs::optimized_matcher::parse_program_complete_info(log) {
-            if let Ok(pk) = Pubkey::from_str(pid) {
-                if let Some(pos) = active_program_stack.iter().rposition(|active| *active == pk) {
-                    active_program_stack.truncate(pos);
-                }
+            if let Some(pos) = active_program_stack.iter().rposition(|active| active.encoded == pid)
+            {
+                active_program_stack.truncate(pos);
             }
         }
     }
@@ -219,8 +252,9 @@ fn parse_instructions(
     block_us: Option<i64>,
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
+    is_created_buy: bool,
 ) -> Vec<DexEvent> {
-    crate::grpc::instruction_parser::parse_instructions_enhanced(
+    crate::grpc::instruction_parser::parse_instructions_enhanced_with_created_buy(
         meta,
         transaction,
         sig,
@@ -229,5 +263,6 @@ fn parse_instructions(
         block_us,
         grpc_us,
         filter,
+        is_created_buy,
     )
 }

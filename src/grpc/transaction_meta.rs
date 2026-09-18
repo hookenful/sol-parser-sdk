@@ -5,10 +5,61 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::instr::read_pubkey_fast;
+use crate::{instr::read_pubkey_fast, DexEvent};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use yellowstone_grpc_proto::prelude::{TokenBalance, Transaction, TransactionStatusMeta};
+
+/// Transaction message version represented by Yellowstone's normalized protobuf.
+///
+/// Yellowstone uses `Message.config` to identify V1. The older `versioned` flag
+/// alone cannot distinguish V0 from V1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum YellowstoneMessageVersion {
+    Legacy,
+    V0,
+    V1,
+}
+
+/// Returns the transaction version encoded by a Yellowstone protobuf message.
+///
+/// `config` must be checked first because both V0 and V1 set `versioned`.
+#[inline]
+pub fn yellowstone_message_version(
+    message: &yellowstone_grpc_proto::prelude::Message,
+) -> YellowstoneMessageVersion {
+    if message.config.is_some() {
+        YellowstoneMessageVersion::V1
+    } else if message.versioned {
+        YellowstoneMessageVersion::V0
+    } else {
+        YellowstoneMessageVersion::Legacy
+    }
+}
+
+/// Fill the public recent blockhash field once final events are known.
+///
+/// Encoding after log/instruction deduplication avoids doing the same base58
+/// allocation independently on both parser branches.
+#[inline]
+pub(crate) fn fill_recent_blockhash(events: &mut [DexEvent], transaction: &Option<Transaction>) {
+    let Some(blockhash) = transaction
+        .as_ref()
+        .and_then(|tx| tx.message.as_ref())
+        .map(|message| message.recent_blockhash.as_slice())
+        .filter(|blockhash| !blockhash.is_empty())
+    else {
+        return;
+    };
+
+    let mut metadata = events.iter_mut().filter_map(DexEvent::metadata_mut);
+    let Some(first) = metadata.next() else { return };
+    let encoded = bs58::encode(blockhash).into_string();
+    for item in metadata {
+        item.recent_blockhash = Some(encoded.clone());
+    }
+    first.recent_blockhash = Some(encoded);
+}
 
 /// 32 字节公钥 → base58 地址字符串。
 #[inline]
@@ -108,7 +159,13 @@ pub fn collect_watch_transfer_counterparty_pairs(
 /// `TokenBalance.ui_token_amount.amount` 解析为原始整数；失败为 0。
 #[inline]
 pub fn token_balance_raw_amount(t: &TokenBalance) -> u64 {
-    t.ui_token_amount.as_ref().and_then(|u| u.amount.parse().ok()).unwrap_or(0)
+    try_token_balance_raw_amount(t).unwrap_or(0)
+}
+
+/// Parse `TokenBalance.ui_token_amount.amount` without treating malformed metadata as zero.
+#[inline]
+pub fn try_token_balance_raw_amount(t: &TokenBalance) -> Option<u64> {
+    t.ui_token_amount.as_ref()?.amount.parse().ok()
 }
 
 /// SPL：对给定 owner（TokenBalance.owner，base58），当其某 mint 上余额净减少 ≥ `min_watch_decrease_raw` 时，
@@ -202,4 +259,36 @@ pub fn try_yellowstone_signature(sig: &[u8]) -> Option<Signature> {
     }
     let a: [u8; 64] = sig.try_into().ok()?;
     Some(Signature::from(a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yellowstone_grpc_proto::prelude::{Message, TransactionConfig};
+
+    #[test]
+    fn message_version_uses_config_before_versioned_flag() {
+        let legacy = Message::default();
+        assert_eq!(yellowstone_message_version(&legacy), YellowstoneMessageVersion::Legacy);
+
+        let v0 = Message { versioned: true, ..Message::default() };
+        assert_eq!(yellowstone_message_version(&v0), YellowstoneMessageVersion::V0);
+
+        let v1 = Message {
+            versioned: true,
+            config: Some(TransactionConfig::default()),
+            ..Message::default()
+        };
+        assert_eq!(yellowstone_message_version(&v1), YellowstoneMessageVersion::V1);
+
+        let v1_with_inconsistent_legacy_flag = Message {
+            versioned: false,
+            config: Some(TransactionConfig::default()),
+            ..Message::default()
+        };
+        assert_eq!(
+            yellowstone_message_version(&v1_with_inconsistent_legacy_flag),
+            YellowstoneMessageVersion::V1
+        );
+    }
 }

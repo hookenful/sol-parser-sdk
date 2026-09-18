@@ -34,12 +34,6 @@
     <a href="https://discord.gg/vuazbGkqQE">Discord</a>
 </p>
 
-> ☕ **支持本项目**
->
-> 本 SDK 完全免费且开源。但维护和持续更新需要消耗大量 AI 算力与 Token。如果这个 SDK 对您的开发有帮助，欢迎每月捐赠任意数量的 SOL，您的支持将帮助这个项目持续运行！
->
-> **捐赠钱包：** `6oW7AXz1yRb57pYSxysuXnMs2aR1ha5rzGzReZ1MjPV8`
-
 ---
 
 ## 📦 SDK 版本
@@ -52,6 +46,17 @@
 | **Node.js** | [sol-parser-sdk-nodejs](https://github.com/0xfnzero/sol-parser-sdk-nodejs) | TypeScript/JavaScript，Node.js 支持 |
 | **Python** | [sol-parser-sdk-python](https://github.com/0xfnzero/sol-parser-sdk-python) | 原生 async/await 支持 |
 | **Go** | [sol-parser-sdk-golang](https://github.com/0xfnzero/sol-parser-sdk-golang) | 并发安全，goroutine 支持 |
+
+## 这个 SDK 适合什么场景
+
+`sol-parser-sdk` 是 Solana DEX 事件的底层 Rust 解析核心，适合交易机器人、跟单管道、狙击机器人、索引服务和流处理系统，从 Yellowstone gRPC 交易、Jito ShredStream entry、RPC 交易 payload 或账户订阅中快速解析出强类型事件。
+
+| 方向 | 覆盖范围 |
+|------|----------|
+| 解析输入 | Yellowstone gRPC、ShredStream、RPC 交易、编码交易、协议账户数据 |
+| DEX 协议 | PumpFun、PumpSwap、Pump Fees、LaunchLab（含 StonkFun）、Raydium CPMM、Raydium CLMM、Raydium AMM V4、Meteora DAMM v2、Meteora DLMM、Meteora DBC、Orca Whirlpool |
+| 解析后端 | 默认 Borsh 解析器便于维护，也可为低延迟热路径启用 zero-copy 解析器 |
+| 相关 SDK | 如果需要更高层的事件流封装，请使用 [solana-streamer](https://github.com/0xfnzero/solana-streamer) |
 
 ---
 
@@ -108,16 +113,105 @@ sol-parser-sdk = { path = "../sol-parser-sdk", default-features = false, feature
 
 ```toml
 # 在 Cargo.toml 中添加
-sol-parser-sdk = "0.5.15"
+sol-parser-sdk = "0.7.5"
 ```
 
 或使用零拷贝解析器（最高性能）：
 
 ```toml
-sol-parser-sdk = { version = "0.5.15", default-features = false, features = ["parse-zero-copy"] }
+sol-parser-sdk = { version = "0.7.5", default-features = false, features = ["parse-zero-copy"] }
 ```
 
 ### 发布说明
+
+#### v0.7.5
+
+- 根据相同池的真实 swap/swap2 指令补全 Meteora DAMM v2 的 mint、vault、payer、token program 等全部账户，并正确处理可选 referral 账户。
+- 避免从其他池或同池多次 swap 的不确定指令中错误填充账户。
+- 使用 solana-streamer issue #82 的两笔真实主网交易验证默认及 zero-copy 解析路径。
+
+#### v0.7.4
+
+- 新增首选订阅名称 `Protocol::StonkFun` 与 `Protocol::LaunchLab`；旧的 `Protocol::RaydiumLaunchlab` 继续兼容。
+- 根据 StonkFun 官方 LaunchLab platform config 识别 standard 与 reward 两种池。
+- 完整解析当前 LaunchLab trade event，包括储备量、全部手续费、池状态与新增的三个尾部交易账户。
+- 支持当前 18 账户 LaunchLab 交易指令布局，并在日志事件与指令事件合并时保留新增账户。
+- 新增真实主网 StonkFun reward 池交易回归测试，交易签名为 `4Pb4vgRq6rAFi5NmMZMsfBvuwVVsvBqhySfPS3naMksujvEiGtPjxRLape7V82ZVQvxt7P8YKPCL6RSWTreMUFrY`。
+- 新增真实主网 StonkFun 毕业后 CPMM swap 回归测试，交易签名为 `3jiXX1AXnQfve1FCHwqUUXoM2BpS2jZEDNB7S6UXLdHGQa3VmBoWNVw9A2gTLbvEZeSU697s9XKgKDqxaR92Qqcz`。
+
+运行受环境变量保护的真实主网解析回归：
+
+```bash
+RUN_MAINNET_TESTS=1 cargo test --test current_mainnet_transactions current_stonkfun_reward_trade_preserves_platform_quote_accounts_and_fees -- --nocapture
+RUN_MAINNET_TESTS=1 cargo test --test current_mainnet_transactions current_stonkfun_graduated_cpmm_swap_parses_from_mainnet -- --nocapture
+```
+
+#### v0.7.3
+
+- 将内置 PumpFun、PumpSwap 与 Pump Fees IDL 同步到 `pump-public-docs` 当前官方定义。
+- 在 instruction、log、account、RPC、gRPC 与 ShredStream 解析链路中补齐 creator fee、holder reward、quote、cashback、buyback 和池配置字段。
+- 修复 outer instruction 与 event-CPI 合并时 PumpFun holder reward 数值丢失，并保持多语言事件 schema 一致。
+- 拒绝已知 PumpSwap trade 与 CreatePool 字段的截断尾部，同时继续兼容完整历史布局和未来追加字段。
+
+#### v0.7.2
+
+- 将 vendored Meteora DAMM v2 IDL 同步到 **0.2.4**，DBC IDL 同步到 **0.2.1**。
+- 新增 DAMM v2 Position Delegate 与 config 事件解析：`EvtUpdateDelegatePermission`、`EvtWithdrawDeadLiquidityReward`、`EvtCreateConfig`、`EvtCreateDynamicConfig`（含 0.2.4 的 `permission` 字段）。
+- 打通日志、优化匹配器、inner instruction 路径，以及 `EventType` / `DexEvent` 过滤。
+- 通过 `Message.config` 识别 Yellowstone V1 消息，并完整输出 priority fee、compute-unit limit、loaded-accounts data-size limit、heap size 四项交易配置；按 Solana 规范忽略 V1 中的 ComputeBudget 指令。
+- Yellowstone V1 接入要求 `yellowstone-grpc-proto >= 12.6.0`，且服务端 Yellowstone geyser plugin 必须 `>= 15.1.1`；更旧的服务端会在传输前把 V1 静默降级成 V0 并丢弃 `Message.config`。
+- 使用纯安全、可移植的 `base58-turbo` 路径加速 RPC inner instruction 的 Base58 解码；在保存的主网 corpus 上，端到端 RPC 解析延迟按指令载荷大小降低 17.7% 至 80% 以上。
+- 在 RPC 解析链路中借用日志与余额 metadata，避免重复克隆；最终跨协议 corpus 中 PumpFun、PumpSwap、Raydium CPMM、Meteora/Orca 交易解析耗时为 7.40-11.80 us。
+- 新增 PumpFun、PumpSwap、Raydium CPMM、Meteora DLMM/Orca 离线 RPC fixture、精确事件回归测试及统一跨协议 benchmark。
+
+#### v0.7.1
+
+- 修复当前 Meteora DAMM v2 `EvtSwap2` 的 180 字节布局、三种 SwapMode、transfer fee、reserve 字段，以及主网 fee 布局升级前后的语义。
+- 增加当前统一的 `EvtLiquidityChange` discriminator，并根据 `change_type` 在日志、优化匹配器和 inner instruction 路径中精确路由为 AddLiquidity 或 RemoveLiquidity。
+- 增加可复现的 DAMM v2 Swap 与 AddLiquidity 主网 RPC 回归测试。
+
+#### v0.7.0
+
+- 将公开 Solana 类型升级到 Solana 4，完整覆盖 Legacy、V0 和 V1 交易消息。
+- 在生产 ShredStream 和 RPC 交易解码路径使用 `wincode 0.5.5`。同一份 21,000 字节 Entry 可复现基准中，解码延迟从旧 bincode 基线的 39.005 us/op 降到 8.956 us/op，降低 77.0%，速度提升 4.36 倍。
+- 删除未使用的直接依赖并对齐 Agave 依赖族。normal 依赖图从 658 个 package/version 项降到 533 个，重复 crate 名从 111 个降到 28 个。
+- Solana 4 client 依赖栈要求最低 Rust 版本为 1.91。
+- 为 Meteora DLMM 增加用户 token 账户上下文，并通过 Serde 默认值保持旧数据兼容。
+
+#### v0.6.6
+
+- 为 PumpFun 交易事件增加交易完成后的 `token_balance`，单位为 mint 原始精度。
+- 增加交易完成后以 lamports 为单位的 `sol_balance`，直接从交易 metadata 填充，无需额外 RPC 请求。
+- 在捕获的 Yellowstone 基准 fixture 上，将 PumpFun 端到端解析延迟从 6.7349 us 降至 4.4293 us，降低 34.23%。
+- 增加可复现的 Criterion 基准、Yellowstone 原始交易 fixture 和实时余额 delta 校验。
+
+#### v0.6.4
+
+- 为当前 Meteora DLMM swap 事件增加 `token_x_mint` 和 `token_y_mint` 上下文。
+- 按事件池精确匹配 mint 账户，防止多段 DLMM 路由复用其他池的账户。
+- 增加 2026-08-14 采集的主网 RPC 示例，覆盖直接 `swap` 和 CPI `swap2` 解析。
+- 兼容反序列化尚未包含新 mint 字段的旧版 JSON。
+
+#### v0.6.3
+
+- 输出当前 LaunchLab 的 quote mint 和 global configuration 上下文，包括 USD1 池。
+- 增加可选的交易费、优先费、compute budget 和 SWQoS tip 解析，覆盖 sol-trade-sdk 支持的全部服务商。
+- 返回每笔已识别 tip 的服务商和收款地址；未启用交易成本解析时不分配内存，开销可忽略。
+- 增加 2026-08-13 采集的 LaunchLab USD1 和交易成本主网交易 fixture，便于后续复用验证。
+
+#### v0.6.2
+
+- 支持当前 Meteora DLMM Anchor event-CPI 前缀布局，同时保留 legacy 后缀格式兼容。
+- 按当前官方来源对齐 Meteora DLMM、Raydium CPMM/AMM V4 和 Orca Whirlpool 的事件与账户布局。
+- 使用 occurrence-aware 日志/指令去重和 stack-aware CPI 合并，保留同一交易中的重复 swap 与流动性事件。
+- 加入 2026-08-13 采集的可复用主网交易 fixture，覆盖 Meteora DLMM、PumpFun、PumpSwap、Raydium 和 Orca。
+
+#### v0.6.1
+
+- 在日志和 CPI/inner-instruction 路径中完整解析当前 PumpSwap Buy/Sell 事件尾部：cashback、buyback 费用、带符号 virtual quote reserves、boost 标记和 base supply。
+- 默认和 zero-copy feature 统一使用经过校验的 PumpSwap trade decoder，同时保持历史事件布局兼容。
+- 对截断尾部、非法 UTF-8、非法 Borsh bool 和字符串边界溢出直接拒绝，不再输出部分解析的事件。
+- 对 buyback 和 boost 升级新增字段提供默认值，保持旧版序列化 PumpSwap 事件兼容。
 
 #### v0.5.15
 
@@ -228,7 +322,7 @@ cargo run --example pumpswap_ordered --release
 | Meteora DAMM V2 事件 | `cargo run --example meteora_damm_grpc --release` | [examples/meteora_damm_grpc.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/meteora_damm_grpc.rs) |
 | 按签名解析 Meteora DAMM 交易 | `TX_SIGNATURE=<sig> cargo run --example parse_meteora_damm_tx --release` | [examples/parse_meteora_damm_tx.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/parse_meteora_damm_tx.rs) |
 | **非 Pump DEX dry-run 场景** | | |
-| Raydium LaunchLab migration 过滤 | `cargo run --example raydium_launchlab_migration` | [examples/raydium_launchlab_migration.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_launchlab_migration.rs) |
+| LaunchLab migration 过滤 | `cargo run --example raydium_launchlab_migration` | [examples/raydium_launchlab_migration.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_launchlab_migration.rs) |
 | Raydium CPMM 新池过滤 | `cargo run --example raydium_cpmm_new_pool` | [examples/raydium_cpmm_new_pool.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_cpmm_new_pool.rs) |
 | Raydium CLMM 价格计算 | `cargo run --example raydium_clmm_token_price` | [examples/raydium_clmm_token_price.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/raydium_clmm_token_price.rs) |
 | Orca Whirlpool 价格计算 | `cargo run --example orca_whirlpool_token_price` | [examples/orca_whirlpool_token_price.rs](https://github.com/0xfnzero/sol-parser-sdk/blob/main/examples/orca_whirlpool_token_price.rs) |
@@ -388,7 +482,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - ✅ **PumpFun** - Meme 币交易（超快零拷贝路径，含 v2 指令）
 - ✅ **Pump Fees** - Pump 费用分成配置事件
 - ✅ **PumpSwap** - PumpFun 交换协议
-- ✅ **Raydium LaunchLab** - 代币发射平台
+- ✅ **LaunchLab** - 代币发射平台，支持识别 StonkFun
 - ✅ **Raydium AMM V4** - 自动做市商
 - ✅ **Raydium CLMM** - 集中流动性做市
 - ✅ **Raydium CPMM** - 集中池做市
@@ -409,7 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | 协议 | 事件 | 账户 | 示例 | 语言常量 |
 |------|------|------|------|----------|
-| Raydium LaunchLab | Trade、PoolCreate、Migrate | 待补 | Migration、buy/sell oracle 规划中 | Rust、Node、Python、Go |
+| LaunchLab | Trade、PoolCreate、Migrate | 待补 | Migration、buy/sell oracle 规划中 | Rust、Node、Python、Go |
 | Raydium CPMM | Swap、Deposit、Withdraw、Initialize | AmmConfig、PoolState | New pool、token price | Rust、Node、Python、Go |
 | Raydium CLMM | Swap、Pool、Position、Liquidity | AmmConfig、PoolState、TickArray | Token price | Rust、Node、Python、Go |
 | Raydium AMM V4 | Swap、Deposit、Withdraw、Initialize2 | 待补 | Token price oracle 规划中 | Rust、Node、Python、Go |
@@ -704,7 +798,7 @@ MIT License
 
 ## 📞 联系方式
 
-- **仓库**: https://github.com/0xfnzero/solana-streamer
+- **仓库**: https://github.com/0xfnzero/sol-parser-sdk
 - **Telegram**: https://t.me/fnzero_group
 - **Discord**: https://discord.gg/vuazbGkqQE
 

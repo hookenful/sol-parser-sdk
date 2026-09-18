@@ -6,6 +6,7 @@ pub mod common;
 pub mod core;
 pub mod instr; // 指令解析器
 pub mod logs; // 日志解析器
+pub mod transaction_cost;
 pub mod utils;
 pub mod warmup; // 预热模块
 
@@ -46,8 +47,14 @@ pub use core::{
 pub use warmup::warmup_parser;
 
 // 导出 RPC 解析函数
+pub use grpc::{yellowstone_message_version, YellowstoneMessageVersion};
 pub use rpc_parser::{
-    convert_rpc_to_grpc, parse_rpc_transaction, parse_transaction_from_rpc, ParseError,
+    convert_rpc_to_grpc, parse_rpc_transaction, parse_rpc_transaction_cost_with_signature,
+    parse_rpc_transaction_with_cost, parse_transaction_from_rpc, ParseError, ParsedRpcTransaction,
+};
+pub use transaction_cost::{
+    parse_rpc_transaction_cost, parse_shred_transaction_cost, parse_yellowstone_transaction_cost,
+    SwqosProvider, SwqosTipAccountGroup, TipPayment, TransactionCost, SWQOS_TIP_ACCOUNT_GROUPS,
 };
 
 // 账户 / RPC 工具（非 DEX 业务）

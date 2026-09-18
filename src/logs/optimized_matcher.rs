@@ -30,8 +30,9 @@ static RAYDIUM_LAUNCHLAB_FINDER: Lazy<memmem::Finder> =
 static PROGRAM_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"Program"));
 static PROGRAM_DATA_FINDER: Lazy<memmem::Finder> =
     Lazy::new(|| memmem::Finder::new(b"Program data: "));
-static PUMPFUN_CREATE_FINDER: Lazy<memmem::Finder> =
-    Lazy::new(|| memmem::Finder::new(b"Program data: G3KpTd7rY3Y"));
+// The first ten base64 characters cover 60 discriminator bits. The next character's high four
+// bits complete the discriminator; its low two bits belong to the first payload byte.
+const PUMPFUN_CREATE_PREFIX: &[u8] = b"Program data: G3KpTd7rY3";
 static WHIRL_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"whirL"));
 static METEORA_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"meteora"));
 static METEORA_LB_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"LB"));
@@ -123,7 +124,7 @@ pub fn detect_log_type(log: &str) -> LogType {
         return LogType::RaydiumCpmm;
     }
 
-    // Raydium LaunchLab (RaydiumLaunchlab)
+    // LaunchLab (RaydiumLaunchlab)
     if RAYDIUM_LAUNCHLAB_FINDER.find(log_bytes).is_some() {
         return LogType::RaydiumLaunchlab;
     }
@@ -178,7 +179,7 @@ mod discriminators {
     pub const PUMPFUN_MIGRATE: u64 = u64::from_le_bytes([189, 233, 93, 185, 92, 148, 234, 148]);
     pub const PUMPFUN_MIGRATE_BONDING_CURVE_CREATOR: u64 =
         u64::from_le_bytes([155, 167, 104, 220, 213, 108, 243, 3]);
-    // Raydium LaunchLab event discriminators. `TRADE` intentionally equals
+    // LaunchLab event discriminators. `TRADE` intentionally equals
     // PumpFun's TradeEvent discriminator, so gRPC must route logs with program
     // context instead of discriminator alone.
     pub const RAYDIUM_LAUNCHLAB_POOL_CREATE: u64 =
@@ -248,6 +249,8 @@ mod discriminators {
     // Raydium CPMM discriminators
     pub const RAYDIUM_CPMM_SWAP_BASE_IN: u64 =
         u64::from_le_bytes([143, 190, 90, 218, 196, 30, 51, 222]);
+    pub const RAYDIUM_CPMM_SWAP_EVENT: u64 =
+        u64::from_le_bytes([64, 198, 205, 232, 38, 8, 113, 226]);
     pub const RAYDIUM_CPMM_SWAP_BASE_OUT: u64 =
         u64::from_le_bytes([55, 217, 98, 86, 163, 74, 180, 173]);
     pub const RAYDIUM_CPMM_CREATE_POOL: u64 =
@@ -294,12 +297,22 @@ mod discriminators {
         u64::from_le_bytes([175, 242, 8, 157, 30, 247, 185, 169]);
     pub const METEORA_DAMM_REMOVE_LIQUIDITY: u64 =
         u64::from_le_bytes([87, 46, 88, 98, 175, 96, 34, 91]);
+    pub const METEORA_DAMM_LIQUIDITY_CHANGE: u64 =
+        u64::from_le_bytes([197, 171, 78, 127, 224, 211, 87, 13]);
     pub const METEORA_DAMM_INITIALIZE_POOL: u64 =
         u64::from_le_bytes([228, 50, 246, 85, 203, 66, 134, 37]);
     pub const METEORA_DAMM_CREATE_POSITION: u64 =
         u64::from_le_bytes([156, 15, 119, 198, 29, 181, 221, 55]);
     pub const METEORA_DAMM_CLOSE_POSITION: u64 =
         u64::from_le_bytes([20, 145, 144, 68, 143, 142, 214, 178]);
+    pub const METEORA_DAMM_UPDATE_DELEGATE_PERMISSION: u64 =
+        u64::from_le_bytes([66, 188, 75, 151, 150, 232, 87, 93]);
+    pub const METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD: u64 =
+        u64::from_le_bytes([228, 66, 150, 195, 42, 62, 163, 13]);
+    pub const METEORA_DAMM_CREATE_CONFIG: u64 =
+        u64::from_le_bytes([131, 207, 180, 174, 180, 73, 165, 54]);
+    pub const METEORA_DAMM_CREATE_DYNAMIC_CONFIG: u64 =
+        u64::from_le_bytes([231, 197, 13, 164, 248, 213, 133, 152]);
 
     // Meteora DBC discriminators. Some values intentionally overlap DAMM V2,
     // so they must be routed with program context.
@@ -309,21 +322,26 @@ mod discriminators {
     pub const METEORA_DBC_CURVE_COMPLETE: u64 =
         u64::from_le_bytes([229, 231, 86, 84, 156, 134, 75, 24]);
 
-    // Meteora DLMM discriminators
-    pub const METEORA_DLMM_SWAP: u64 = u64::from_le_bytes([143, 190, 90, 218, 196, 30, 51, 222]);
+    // Meteora DLMM event discriminators. Current DLMM uses Anchor event-CPI
+    // discriminators that overlap with Meteora Pools, so scoped routing is required.
+    pub const METEORA_DLMM_SWAP: u64 = u64::from_le_bytes([81, 108, 227, 190, 205, 208, 10, 196]);
+    pub const METEORA_DLMM_SWAP2: u64 = u64::from_le_bytes([46, 116, 82, 215, 148, 27, 84, 77]);
     pub const METEORA_DLMM_ADD_LIQUIDITY: u64 =
-        u64::from_le_bytes([181, 157, 89, 67, 143, 182, 52, 72]);
+        u64::from_le_bytes([31, 94, 125, 90, 227, 52, 61, 186]);
     pub const METEORA_DLMM_REMOVE_LIQUIDITY: u64 =
-        u64::from_le_bytes([80, 85, 209, 72, 24, 206, 35, 178]);
+        u64::from_le_bytes([116, 244, 97, 232, 103, 31, 152, 58]);
     pub const METEORA_DLMM_INITIALIZE_POOL: u64 =
-        u64::from_le_bytes([95, 180, 10, 172, 84, 174, 232, 40]);
+        u64::from_le_bytes([185, 74, 252, 125, 27, 215, 188, 111]);
     pub const METEORA_DLMM_INITIALIZE_BIN_ARRAY: u64 =
         u64::from_le_bytes([11, 18, 155, 194, 33, 115, 238, 119]);
     pub const METEORA_DLMM_CREATE_POSITION: u64 =
-        u64::from_le_bytes([123, 233, 11, 43, 146, 180, 97, 119]);
+        u64::from_le_bytes([144, 142, 252, 84, 157, 53, 37, 121]);
     pub const METEORA_DLMM_CLOSE_POSITION: u64 =
-        u64::from_le_bytes([94, 168, 102, 45, 59, 122, 137, 54]);
-    pub const METEORA_DLMM_CLAIM_FEE: u64 = u64::from_le_bytes([152, 70, 208, 111, 104, 91, 44, 1]);
+        u64::from_le_bytes([255, 196, 16, 107, 28, 202, 53, 128]);
+    pub const METEORA_DLMM_CLAIM_FEE: u64 =
+        u64::from_le_bytes([75, 122, 154, 48, 140, 74, 123, 163]);
+    pub const METEORA_DLMM_CLAIM_FEE2: u64 =
+        u64::from_le_bytes([232, 171, 242, 97, 58, 77, 35, 45]);
 }
 
 /// Optimized unified log parser with **discriminator predecode, decode-on-match** strategy
@@ -453,14 +471,28 @@ fn filter_wants_supported_logs(filter: &EventTypeFilter) -> bool {
 }
 
 #[inline(always)]
+fn filter_wants_pumpfun_trade_event(filter: &EventTypeFilter) -> bool {
+    filter.should_include(EventType::PumpFunTrade)
+        || filter.should_include(EventType::PumpFunBuy)
+        || filter.should_include(EventType::PumpFunSell)
+        || filter.should_include(EventType::PumpFunBuyExactSolIn)
+}
+
+#[inline(always)]
+fn filter_wants_launchlab_trade_event(filter: &EventTypeFilter) -> bool {
+    filter.should_include(EventType::RaydiumLaunchlabTrade)
+}
+
+#[inline(always)]
 fn unscoped_filter_allows_discriminator(discriminator: u64, filter: &EventTypeFilter) -> bool {
     match discriminator {
-        // Shared by Pump.fun trade and Raydium LaunchLab/RaydiumLaunchlab trade.
+        // Shared by Pump.fun trade and LaunchLab/RaydiumLaunchlab trade.
         discriminators::PUMPFUN_TRADE => {
-            filter.should_include(EventType::PumpFunTrade)
+            filter_wants_pumpfun_trade_event(filter)
                 || filter.should_include(EventType::RaydiumLaunchlabTrade)
         }
-        // Shared by Raydium CPMM swap-base-in and Meteora DLMM swap.
+        // Legacy DLMM swap overlapped Raydium CPMM. Current DLMM swap overlaps
+        // Meteora Pools swap and is resolved by scoped routing.
         discriminators::RAYDIUM_CPMM_SWAP_BASE_IN => {
             filter.should_include(EventType::RaydiumCpmmSwap)
                 || filter.should_include(EventType::MeteoraDlmmSwap)
@@ -485,10 +517,7 @@ fn filter_allows_discriminator(
         if *program_id == program_ids::PUMPFUN_PROGRAM_ID
             && discriminator == discriminators::PUMPFUN_TRADE
         {
-            return filter.should_include(EventType::PumpFunTrade)
-                || filter.should_include(EventType::PumpFunBuy)
-                || filter.should_include(EventType::PumpFunSell)
-                || filter.should_include(EventType::PumpFunBuyExactSolIn);
+            return filter_wants_pumpfun_trade_event(filter);
         }
         if let Some(event_type) =
             program_scoped_discriminator_to_event_type(program_id, discriminator)
@@ -515,6 +544,33 @@ fn apply_event_type_filter(
 }
 
 #[inline(always)]
+fn parse_unscoped_pumpfun_launchlab_trade(
+    data: &[u8],
+    metadata: EventMetadata,
+    event_type_filter: Option<&EventTypeFilter>,
+    is_created_buy: bool,
+) -> Option<DexEvent> {
+    let wants_pumpfun = event_type_filter.map(filter_wants_pumpfun_trade_event).unwrap_or(true);
+    let wants_launchlab = event_type_filter.map(filter_wants_launchlab_trade_event).unwrap_or(true);
+
+    if wants_pumpfun {
+        if let Some(event) =
+            crate::logs::pump::parse_trade_from_data(data, metadata.clone(), is_created_buy)
+                .and_then(|event| apply_event_type_filter(event, event_type_filter))
+        {
+            return Some(event);
+        }
+    }
+
+    if wants_launchlab {
+        return crate::logs::raydium_launchlab::parse_trade_from_data(data, metadata)
+            .and_then(|event| apply_event_type_filter(event, event_type_filter));
+    }
+
+    None
+}
+
+#[inline(always)]
 fn parse_log_optimized_inner(
     log: &str,
     signature: Signature,
@@ -527,10 +583,31 @@ fn parse_log_optimized_inner(
     recent_blockhash: Option<&[u8]>,
     program_id: Option<&Pubkey>,
 ) -> Option<DexEvent> {
-    // Step 1: Find "Program data: " prefix using SIMD
+    if program_id == Some(&program_ids::RAYDIUM_AMM_V4_PROGRAM_ID) && log.contains("ray_log: ") {
+        if event_type_filter
+            .map(|filter| !filter.should_include(EventType::RaydiumAmmV4Swap))
+            .unwrap_or(false)
+        {
+            return None;
+        }
+        let metadata = EventMetadata {
+            signature,
+            slot,
+            tx_index,
+            block_time_us: block_time_us.unwrap_or(0),
+            grpc_recv_us,
+            recent_blockhash: recent_blockhash.map(|s| bs58::encode(s).into_string()),
+        };
+        return crate::logs::raydium_amm::parse_ray_log_swap(log, metadata);
+    }
+    // Standard Solana log lines start with the prefix. Keep the finder fallback for callers that
+    // pass decorated log text through the public parser.
     let log_bytes = log.as_bytes();
-    let pos = PROGRAM_DATA_FINDER.find(log_bytes)?;
-    let data_start = pos + 14; // "Program data: " length
+    let data_start = if log_bytes.starts_with(program_id_strings::PROGRAM_DATA.as_bytes()) {
+        program_id_strings::PROGRAM_DATA.len()
+    } else {
+        PROGRAM_DATA_FINDER.find(log_bytes)? + program_id_strings::PROGRAM_DATA.len()
+    };
 
     if log_bytes.len() <= data_start {
         return None;
@@ -538,7 +615,7 @@ fn parse_log_optimized_inner(
 
     // Step 2: Decode base64 ONCE. Normal swap logs stay on the stack; rare large
     // IDL events (for example pump-fees vectors) fall back to heap instead of being dropped.
-    const STACK_DECODE_CAP: usize = 2048;
+    const STACK_DECODE_CAP: usize = 512;
     let data_part = &log[data_start..];
     let trimmed = data_part.trim();
 
@@ -614,9 +691,14 @@ fn parse_log_optimized_inner(
 
     // Check hot-path discriminators first (ordered by frequency)
     if likely(discriminator == discriminators::PUMPFUN_TRADE) {
-        // PumpFun Trade - Most common (~40% of all events)
-        let event = crate::logs::pump::parse_trade_from_data(data, metadata, is_created_buy)?;
-        return apply_event_type_filter(event, event_type_filter);
+        // Shared by PumpFun and LaunchLab. Without program context,
+        // avoid parsing protocols the filter does not request.
+        return parse_unscoped_pumpfun_launchlab_trade(
+            data,
+            metadata,
+            event_type_filter,
+            is_created_buy,
+        );
     }
 
     if likely(discriminator == discriminators::RAYDIUM_CLMM_SWAP) {
@@ -832,6 +914,9 @@ fn parse_log_optimized_inner(
         discriminators::METEORA_DAMM_REMOVE_LIQUIDITY => {
             crate::logs::meteora_damm::parse_remove_liquidity_from_data(data, metadata)
         }
+        discriminators::METEORA_DAMM_LIQUIDITY_CHANGE => {
+            crate::logs::meteora_damm::parse_liquidity_change_from_data(data, metadata)
+        }
         discriminators::METEORA_DAMM_INITIALIZE_POOL => {
             crate::logs::meteora_damm::parse_initialize_pool_from_data(data, metadata)
         }
@@ -841,10 +926,23 @@ fn parse_log_optimized_inner(
         discriminators::METEORA_DAMM_CLOSE_POSITION => {
             crate::logs::meteora_damm::parse_close_position_from_data(data, metadata)
         }
+        discriminators::METEORA_DAMM_UPDATE_DELEGATE_PERMISSION => {
+            crate::logs::meteora_damm::parse_update_delegate_permission_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
+            crate::logs::meteora_damm::parse_withdraw_dead_liquidity_reward_from_data(
+                data, metadata,
+            )
+        }
+        discriminators::METEORA_DAMM_CREATE_CONFIG => {
+            crate::logs::meteora_damm::parse_create_config_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_CREATE_DYNAMIC_CONFIG => {
+            crate::logs::meteora_damm::parse_create_dynamic_config_from_data(data, metadata)
+        }
 
-        // NOTE: Meteora DLMM discriminators conflict with Raydium CPMM!
-        // METEORA_DLMM_SWAP == RAYDIUM_CPMM_SWAP_BASE_IN
-        // Handle DLMM in fallback using log content detection
+        // NOTE: current Meteora DLMM discriminators overlap other Meteora
+        // programs, so DLMM is routed in the program-scoped path.
 
         // Unknown discriminator - try fallback protocols
         _ => {
@@ -958,7 +1056,8 @@ fn program_scoped_discriminator_to_event_type(
             _ => None,
         },
         program_ids::RAYDIUM_CPMM_PROGRAM_ID => match discriminator {
-            discriminators::RAYDIUM_CPMM_SWAP_BASE_IN
+            discriminators::RAYDIUM_CPMM_SWAP_EVENT
+            | discriminators::RAYDIUM_CPMM_SWAP_BASE_IN
             | discriminators::RAYDIUM_CPMM_SWAP_BASE_OUT => Some(EventType::RaydiumCpmmSwap),
             discriminators::RAYDIUM_CPMM_CREATE_POOL => Some(EventType::RaydiumCpmmInitialize),
             discriminators::RAYDIUM_CPMM_DEPOSIT => Some(EventType::RaydiumCpmmDeposit),
@@ -1008,6 +1107,9 @@ fn program_scoped_discriminator_to_event_type(
             discriminators::METEORA_DAMM_REMOVE_LIQUIDITY => {
                 Some(EventType::MeteoraDammV2RemoveLiquidity)
             }
+            // Current DAMM v2 uses one discriminator for add/remove; `change_type`
+            // in the payload selects the public event type after decoding.
+            discriminators::METEORA_DAMM_LIQUIDITY_CHANGE => None,
             discriminators::METEORA_DAMM_INITIALIZE_POOL => {
                 Some(EventType::MeteoraDammV2InitializePool)
             }
@@ -1016,6 +1118,18 @@ fn program_scoped_discriminator_to_event_type(
             }
             discriminators::METEORA_DAMM_CLOSE_POSITION => {
                 Some(EventType::MeteoraDammV2ClosePosition)
+            }
+            discriminators::METEORA_DAMM_UPDATE_DELEGATE_PERMISSION => {
+                Some(EventType::MeteoraDammV2UpdateDelegatePermission)
+            }
+            discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
+                Some(EventType::MeteoraDammV2WithdrawDeadLiquidityReward)
+            }
+            discriminators::METEORA_DAMM_CREATE_CONFIG => {
+                Some(EventType::MeteoraDammV2CreateConfig)
+            }
+            discriminators::METEORA_DAMM_CREATE_DYNAMIC_CONFIG => {
+                Some(EventType::MeteoraDammV2CreateDynamicConfig)
             }
             _ => None,
         },
@@ -1028,7 +1142,9 @@ fn program_scoped_discriminator_to_event_type(
             _ => None,
         },
         program_ids::METEORA_DLMM_PROGRAM_ID => match discriminator {
-            discriminators::METEORA_DLMM_SWAP => Some(EventType::MeteoraDlmmSwap),
+            discriminators::METEORA_DLMM_SWAP | discriminators::METEORA_DLMM_SWAP2 => {
+                Some(EventType::MeteoraDlmmSwap)
+            }
             discriminators::METEORA_DLMM_ADD_LIQUIDITY => Some(EventType::MeteoraDlmmAddLiquidity),
             discriminators::METEORA_DLMM_REMOVE_LIQUIDITY => {
                 Some(EventType::MeteoraDlmmRemoveLiquidity)
@@ -1045,7 +1161,9 @@ fn program_scoped_discriminator_to_event_type(
             discriminators::METEORA_DLMM_CLOSE_POSITION => {
                 Some(EventType::MeteoraDlmmClosePosition)
             }
-            discriminators::METEORA_DLMM_CLAIM_FEE => Some(EventType::MeteoraDlmmClaimFee),
+            discriminators::METEORA_DLMM_CLAIM_FEE | discriminators::METEORA_DLMM_CLAIM_FEE2 => {
+                Some(EventType::MeteoraDlmmClaimFee)
+            }
             _ => None,
         },
         _ => None,
@@ -1071,11 +1189,7 @@ fn parse_program_scoped_event(
         if *program_id == program_ids::PUMPFUN_PROGRAM_ID
             && discriminator == discriminators::PUMPFUN_TRADE
         {
-            if !filter.should_include(EventType::PumpFunTrade)
-                && !filter.should_include(EventType::PumpFunBuy)
-                && !filter.should_include(EventType::PumpFunSell)
-                && !filter.should_include(EventType::PumpFunBuyExactSolIn)
-            {
+            if !filter_wants_pumpfun_trade_event(filter) {
                 return None;
             }
         } else if let Some(event_type) =
@@ -1260,6 +1374,9 @@ fn parse_program_scoped_event(
                 }
             }
             match discriminator {
+                discriminators::RAYDIUM_CPMM_SWAP_EVENT => {
+                    crate::logs::raydium_cpmm::parse_swap_event_from_data(data, metadata)
+                }
                 discriminators::RAYDIUM_CPMM_SWAP_BASE_IN => {
                     crate::logs::raydium_cpmm::parse_swap_base_in_from_data(data, metadata)
                 }
@@ -1375,6 +1492,12 @@ fn parse_program_scoped_event(
                 discriminators::METEORA_DAMM_REMOVE_LIQUIDITY => {
                     crate::logs::meteora_damm::parse_remove_liquidity_from_data(data, metadata)
                 }
+                discriminators::METEORA_DAMM_LIQUIDITY_CHANGE => {
+                    let event = crate::logs::meteora_damm::parse_liquidity_change_from_data(
+                        data, metadata,
+                    )?;
+                    apply_event_type_filter(event, event_type_filter)
+                }
                 discriminators::METEORA_DAMM_INITIALIZE_POOL => {
                     crate::logs::meteora_damm::parse_initialize_pool_from_data(data, metadata)
                 }
@@ -1383,6 +1506,22 @@ fn parse_program_scoped_event(
                 }
                 discriminators::METEORA_DAMM_CLOSE_POSITION => {
                     crate::logs::meteora_damm::parse_close_position_from_data(data, metadata)
+                }
+                discriminators::METEORA_DAMM_UPDATE_DELEGATE_PERMISSION => {
+                    crate::logs::meteora_damm::parse_update_delegate_permission_from_data(
+                        data, metadata,
+                    )
+                }
+                discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
+                    crate::logs::meteora_damm::parse_withdraw_dead_liquidity_reward_from_data(
+                        data, metadata,
+                    )
+                }
+                discriminators::METEORA_DAMM_CREATE_CONFIG => {
+                    crate::logs::meteora_damm::parse_create_config_from_data(data, metadata)
+                }
+                discriminators::METEORA_DAMM_CREATE_DYNAMIC_CONFIG => {
+                    crate::logs::meteora_damm::parse_create_dynamic_config_from_data(data, metadata)
                 }
                 _ => None,
             }
@@ -1416,6 +1555,9 @@ fn parse_program_scoped_event(
                 discriminators::METEORA_DLMM_SWAP => {
                     crate::logs::meteora_dlmm::parse_swap_from_data(data, metadata)
                 }
+                discriminators::METEORA_DLMM_SWAP2 => {
+                    crate::logs::meteora_dlmm::parse_swap2_from_data(data, metadata)
+                }
                 discriminators::METEORA_DLMM_ADD_LIQUIDITY => {
                     crate::logs::meteora_dlmm::parse_add_liquidity_from_data(data, metadata)
                 }
@@ -1423,19 +1565,22 @@ fn parse_program_scoped_event(
                     crate::logs::meteora_dlmm::parse_remove_liquidity_from_data(data, metadata)
                 }
                 discriminators::METEORA_DLMM_INITIALIZE_POOL => {
-                    crate::logs::meteora_dlmm::parse_initialize_pool_from_data(data, metadata)
+                    crate::logs::meteora_dlmm::parse_lb_pair_create_from_data(data, metadata)
                 }
                 discriminators::METEORA_DLMM_INITIALIZE_BIN_ARRAY => {
                     crate::logs::meteora_dlmm::parse_initialize_bin_array_from_data(data, metadata)
                 }
                 discriminators::METEORA_DLMM_CREATE_POSITION => {
-                    crate::logs::meteora_dlmm::parse_create_position_from_data(data, metadata)
+                    crate::logs::meteora_dlmm::parse_position_create_from_data(data, metadata)
                 }
                 discriminators::METEORA_DLMM_CLOSE_POSITION => {
-                    crate::logs::meteora_dlmm::parse_close_position_from_data(data, metadata)
+                    crate::logs::meteora_dlmm::parse_position_close_from_data(data, metadata)
                 }
                 discriminators::METEORA_DLMM_CLAIM_FEE => {
                     crate::logs::meteora_dlmm::parse_claim_fee_from_data(data, metadata)
+                }
+                discriminators::METEORA_DLMM_CLAIM_FEE2 => {
+                    crate::logs::meteora_dlmm::parse_claim_fee2_from_data(data, metadata)
                 }
                 _ => None,
             }
@@ -1607,6 +1752,16 @@ fn discriminator_to_event_type(discriminator: u64) -> Option<EventType> {
             Some(EventType::MeteoraDammV2CreatePosition)
         }
         discriminators::METEORA_DAMM_CLOSE_POSITION => Some(EventType::MeteoraDammV2ClosePosition),
+        discriminators::METEORA_DAMM_UPDATE_DELEGATE_PERMISSION => {
+            Some(EventType::MeteoraDammV2UpdateDelegatePermission)
+        }
+        discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
+            Some(EventType::MeteoraDammV2WithdrawDeadLiquidityReward)
+        }
+        discriminators::METEORA_DAMM_CREATE_CONFIG => Some(EventType::MeteoraDammV2CreateConfig),
+        discriminators::METEORA_DAMM_CREATE_DYNAMIC_CONFIG => {
+            Some(EventType::MeteoraDammV2CreateDynamicConfig)
+        }
         _ => None,
     }
 }
@@ -1616,62 +1771,51 @@ fn discriminator_to_event_type(discriminator: u64) -> Option<EventType> {
 // ============================================================================
 #[inline]
 pub fn detect_pumpfun_create(logs: &[String]) -> bool {
-    logs.iter().any(|log| PUMPFUN_CREATE_FINDER.find(log.as_bytes()).is_some())
+    logs.iter().any(|log| {
+        let bytes = log.as_bytes();
+        bytes.starts_with(PUMPFUN_CREATE_PREFIX)
+            && matches!(bytes.get(PUMPFUN_CREATE_PREFIX.len()), Some(b'Y' | b'Z' | b'a' | b'b'))
+    })
 }
 
-/// SIMD 优化的 "invoke [" 查找器
 static INVOKE_FINDER: Lazy<memmem::Finder> = Lazy::new(|| memmem::Finder::new(b"invoke ["));
 
-/// 从日志中解析指令调用信息 (SIMD 优化版本)
+/// Parse the canonical `Program <id> invoke [<depth>]` runtime log line.
 /// 返回 (program_id, depth)
 #[inline]
 pub fn parse_invoke_info(log: &str) -> Option<(&str, usize)> {
-    let log_bytes = log.as_bytes();
-
-    // SIMD 快速查找 "invoke ["
-    let invoke_start = INVOKE_FINDER.find(log_bytes)?;
-    let bracket_start = invoke_start + 8; // "invoke [" 长度
-
-    // 边界检查
-    if bracket_start >= log_bytes.len() {
+    let bytes = log.as_bytes();
+    if !bytes.starts_with(b"Program ") || !bytes.ends_with(b"]") {
+        return None;
+    }
+    let invoke_start = INVOKE_FINDER.find(bytes)?;
+    if invoke_start <= 8 || bytes.get(invoke_start - 1) != Some(&b' ') {
+        return None;
+    }
+    let depth_start = invoke_start + b"invoke [".len();
+    let depth_bytes = bytes.get(depth_start..bytes.len() - 1)?;
+    if depth_bytes.is_empty() {
         return None;
     }
 
-    // 解析深度数字，直到遇到 ']'
     let mut depth = 0usize;
-    for &byte in &log_bytes[bracket_start..] {
-        match byte {
-            b'0'..=b'9' => {
-                depth = depth * 10 + (byte - b'0') as usize;
-            }
-            b']' => break,
-            _ => return None, // 遇到非数字非']'字符，解析失败
+    for &byte in depth_bytes {
+        if !byte.is_ascii_digit() {
+            return None;
         }
+        let digit = (byte - b'0') as usize;
+        depth = depth.checked_mul(10)?.checked_add(digit)?;
     }
-
-    // 提取程序ID：从 "Program " 开始到 " invoke" 结束
-    if invoke_start < 8 {
-        return None; // 没有足够空间放 "Program "
-    }
-
-    let program_start = 8; // "Program " 的长度
-    let program_end = invoke_start - 1; // " invoke" 前面的空格位置
-
-    if program_end <= program_start {
-        return None;
-    }
-
-    let program_id = std::str::from_utf8(&log_bytes[program_start..program_end]).ok()?;
-
-    Some((program_id, depth))
+    let program_id = log.get(8..invoke_start - 1)?;
+    (depth > 0).then_some((program_id, depth))
 }
 
 /// Parse `Program <id> success` or `Program <id> failed: ...` completion lines.
 #[inline]
 pub fn parse_program_complete_info(log: &str) -> Option<&str> {
     let rest = log.strip_prefix("Program ")?;
-    if let Some(pos) = rest.find(" success") {
-        return Some(&rest[..pos]);
+    if let Some(program_id) = rest.strip_suffix(" success") {
+        return (!program_id.is_empty()).then_some(program_id);
     }
     if let Some(pos) = rest.find(" failed:") {
         return Some(&rest[..pos]);
@@ -1685,6 +1829,19 @@ mod tests {
     use crate::core::events::PumpFunTradeEvent;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     use solana_sdk::{pubkey::Pubkey, signature::Signature};
+
+    #[test]
+    fn pumpfun_create_detection_requires_canonical_program_data_prefix() {
+        for first_payload_byte in [0, 64, 128, 192] {
+            let mut raw = discriminators::PUMPFUN_CREATE.to_le_bytes().to_vec();
+            raw.push(first_payload_byte);
+            let create = vec![format!("Program data: {}", STANDARD.encode(raw))];
+            assert!(detect_pumpfun_create(&create));
+        }
+
+        let unrelated = vec!["Program log: Program data: G3KpTd7rY3Yrest".to_owned()];
+        assert!(!detect_pumpfun_create(&unrelated));
+    }
 
     #[test]
     fn program_scoped_launchlab_trade_is_not_parsed_as_pumpfun() {
@@ -1725,6 +1882,68 @@ mod tests {
             }
             other => panic!("expected RaydiumLaunchlabTrade, got {other:?}"),
         }
+    }
+
+    fn launchlab_trade_log() -> (String, Pubkey) {
+        let pool = Pubkey::new_unique();
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&discriminators::RAYDIUM_LAUNCHLAB_TRADE.to_le_bytes());
+        raw.extend_from_slice(pool.as_ref());
+        for value in 0u64..13 {
+            raw.extend_from_slice(&(100 + value).to_le_bytes());
+        }
+        raw.push(1); // TradeDirection::Sell
+        raw.push(2); // PoolStatus::Trade
+        raw.push(1); // exact_in
+
+        (format!("Program data: {}", STANDARD.encode(raw)), pool)
+    }
+
+    #[test]
+    fn unscoped_launchlab_trade_filter_parses_shared_discriminator() {
+        let (log, pool) = launchlab_trade_log();
+        let filter = EventTypeFilter::include_only(vec![EventType::RaydiumLaunchlabTrade]);
+        let event = parse_log_optimized(
+            &log,
+            Signature::default(),
+            1,
+            2,
+            Some(3),
+            4,
+            Some(&filter),
+            false,
+            None,
+        )
+        .expect("unscoped LaunchLab trade should parse when requested");
+
+        match event {
+            DexEvent::RaydiumLaunchlabTrade(trade) => {
+                assert_eq!(trade.pool_state, pool);
+                assert_eq!(trade.amount_in, 107);
+                assert_eq!(trade.amount_out, 108);
+                assert!(!trade.is_buy);
+                assert!(trade.exact_in);
+            }
+            other => panic!("expected RaydiumLaunchlabTrade, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unscoped_pumpfun_only_filter_does_not_parse_launchlab_trade() {
+        let (log, _pool) = launchlab_trade_log();
+        let filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        assert!(parse_log_optimized(
+            &log,
+            Signature::default(),
+            1,
+            2,
+            Some(3),
+            4,
+            Some(&filter),
+            false,
+            None,
+        )
+        .is_none());
     }
 
     #[test]
@@ -1946,11 +2165,42 @@ mod tests {
     }
 
     #[test]
+    fn unscoped_pumpfun_buy_filter_parses_trade_log_variant() {
+        let log = "Program data: vdt/007mYe5StuUGXKtQJzSLsEK5h79gIdGUQz7vyn59ApMQyeYlr3cK4wUAAAAA7dnMPhkDAAAB5uPeR/hOJigYiGhz2PiTzeNML3vtbrwijyhrJHoTgitivC1qAAAAALjcux8HAAAAt2E0T9e8AwC4MJgjAAAAALfJIQNGvgIA4ATIfOuY+lzkf4A4Bv0seUXSlSSVmuwA3tl4FPOPeEZfAAAAAAAAACBRDgAAAAAAbf5L76S20PsQ+d4EfYrWKDprZOVyf9lJPbA04mYiiiweAAAAAAAAAGmFBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAGJ1eQAAAAAAAAAAAAAAAAAAAAAAiBMAAAAAAACQKAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHcK4wUAAAAAuNy7HwcAAAC4MJgjAAAAAA==";
+        let filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        let event = parse_log_optimized(
+            log,
+            Signature::default(),
+            426270756,
+            268,
+            Some(1781382243600841),
+            1781382243601307,
+            Some(&filter),
+            false,
+            None,
+        )
+        .expect("Unscoped PumpFun TradeEvent log should parse under PumpFunBuy filter");
+
+        match event {
+            DexEvent::PumpFunBuy(trade) => {
+                assert_eq!(trade.ix_name, "buy");
+                assert_eq!(trade.sol_amount, 98_765_431);
+                assert_eq!(trade.token_amount, 3_406_962_678_253);
+                assert_eq!(trade.virtual_sol_reserves, 30_597_176_504);
+                assert_eq!(trade.virtual_token_reserves, 1_052_057_862_955_447);
+                assert_eq!(trade.real_sol_reserves, 597_176_504);
+                assert_eq!(trade.real_token_reserves, 772_157_862_955_447);
+            }
+            other => panic!("expected PumpFunBuy, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn discriminator_prefix_filter_keeps_unscoped_collision_candidates() {
         let dlmm_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDlmmSwap]);
         assert!(filter_allows_discriminator(
             None,
-            discriminators::METEORA_DLMM_SWAP,
+            discriminators::METEORA_DLMM_SWAP2,
             Some(&dlmm_filter),
         ));
 
@@ -1959,6 +2209,13 @@ mod tests {
             None,
             discriminators::RAYDIUM_CPMM_CREATE_POOL,
             Some(&cpmm_filter),
+        ));
+
+        let pumpfun_buy_filter = EventTypeFilter::include_only(vec![EventType::PumpFunBuy]);
+        assert!(filter_allows_discriminator(
+            None,
+            discriminators::PUMPFUN_TRADE,
+            Some(&pumpfun_buy_filter),
         ));
     }
 
@@ -2209,5 +2466,22 @@ mod tests {
             ),
             Some("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C")
         );
+    }
+
+    #[test]
+    fn invoke_parser_accepts_only_complete_positive_depth_lines() {
+        assert_eq!(
+            parse_invoke_info("Program 11111111111111111111111111111111 invoke [12]"),
+            Some(("11111111111111111111111111111111", 12))
+        );
+        for malformed in [
+            "prefix Program 11111111111111111111111111111111 invoke [1]",
+            "Program 11111111111111111111111111111111 invoke [0]",
+            "Program 11111111111111111111111111111111 invoke [1",
+            "Program 11111111111111111111111111111111 invoke []",
+            "Program 11111111111111111111111111111111 invoke [1] trailing",
+        ] {
+            assert_eq!(parse_invoke_info(malformed), None, "accepted {malformed}");
+        }
     }
 }

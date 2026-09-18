@@ -6,14 +6,37 @@
 //! - 可读性：每个步骤都有明确的注释
 
 use crate::core::{
-    events::*, merger::merge_events, pumpfun_fee_enrich::enrich_pumpfun_same_tx_post_merge,
+    events::*, merger::try_merge_events, pumpfun_fee_enrich::enrich_pumpfun_same_tx_post_merge,
 };
 use crate::grpc::types::EventTypeFilter;
 use crate::instr::read_pubkey_fast;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use std::collections::HashMap;
 use yellowstone_grpc_proto::prelude::{Transaction, TransactionStatusMeta};
+
+#[derive(Debug)]
+struct IndexedInstructionEvent {
+    outer_idx: usize,
+    inner_idx: Option<usize>,
+    stack_height: Option<u32>,
+    is_dlmm_event_cpi: bool,
+    event: DexEvent,
+}
+
+#[inline(always)]
+fn is_dlmm_event(event: &DexEvent) -> bool {
+    matches!(
+        event,
+        DexEvent::MeteoraDlmmSwap(_)
+            | DexEvent::MeteoraDlmmAddLiquidity(_)
+            | DexEvent::MeteoraDlmmRemoveLiquidity(_)
+            | DexEvent::MeteoraDlmmInitializePool(_)
+            | DexEvent::MeteoraDlmmInitializeBinArray(_)
+            | DexEvent::MeteoraDlmmCreatePosition(_)
+            | DexEvent::MeteoraDlmmClosePosition(_)
+            | DexEvent::MeteoraDlmmClaimFee(_)
+    )
+}
 
 /// 解析交易中的所有指令事件（instruction + inner instruction）
 ///
@@ -39,22 +62,46 @@ pub fn parse_instructions_enhanced(
     grpc_us: i64,
     filter: Option<&EventTypeFilter>,
 ) -> Vec<DexEvent> {
+    let needs_pumpfun = filter.map(EventTypeFilter::includes_pumpfun).unwrap_or(true);
+    let is_created_buy =
+        needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
+    let mut events = parse_instructions_enhanced_with_created_buy(
+        meta,
+        transaction,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        filter,
+        is_created_buy,
+    );
+    for event in &mut events {
+        crate::core::common_filler::fill_token_balances(event, meta, transaction);
+    }
+    crate::grpc::transaction_meta::fill_recent_blockhash(&mut events, transaction);
+    events
+}
+
+#[inline]
+pub(crate) fn parse_instructions_enhanced_with_created_buy(
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    filter: Option<&EventTypeFilter>,
+    is_created_buy: bool,
+) -> Vec<DexEvent> {
     let Some(tx) = transaction else { return Vec::new() };
     let Some(msg) = &tx.message else { return Vec::new() };
-
-    let recent_blockhash = if msg.recent_blockhash.is_empty() {
-        None
-    } else {
-        Some(bs58::encode(&msg.recent_blockhash).into_string())
-    };
 
     // 提前检查：是否需要解析 instruction（根据 filter）
     if !should_parse_instructions(filter) {
         return Vec::new();
     }
-
-    // 与 log 解析一致：同笔交易内若有 PumpFun create，则本 tx 的 buy 事件标记为 is_created_buy（创建者首次买入）
-    let is_created_buy = crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
 
     // 构建账户查找表
     let keys_len = msg.account_keys.len();
@@ -70,14 +117,15 @@ pub fn parse_instructions_enhanced(
     };
 
     let mut result = Vec::with_capacity(8);
-    let mut invokes: HashMap<Pubkey, Vec<(i32, i32)>> = HashMap::with_capacity(8);
-
+    let mut invokes = crate::core::invoke_context::InvokeContext::default();
     // 步骤 1: 解析所有主指令
     for (i, ix) in msg.instructions.iter().enumerate() {
         let pid = get_key(ix.program_id_index as usize)
             .map_or(Pubkey::default(), |k| read_pubkey_fast(k));
 
-        invokes.entry(pid).or_default().push((i as i32, -1));
+        if crate::grpc::program_ids::needs_invoke_context(&pid) {
+            invokes.push(pid, (i as i32, -1));
+        }
 
         // 解析主指令（8字节 discriminator）
         if let Some(event) = parse_outer_instruction(
@@ -93,7 +141,13 @@ pub fn parse_instructions_enhanced(
             filter,
             is_created_buy,
         ) {
-            result.push((i, None, event)); // (outer_idx, inner_idx, event)
+            result.push(IndexedInstructionEvent {
+                outer_idx: i,
+                inner_idx: None,
+                stack_height: Some(1),
+                is_dlmm_event_cpi: false,
+                event,
+            });
         }
     }
 
@@ -105,10 +159,11 @@ pub fn parse_instructions_enhanced(
             let pid = get_key(inner_ix.program_id_index as usize)
                 .map_or(Pubkey::default(), |k| read_pubkey_fast(k));
 
-            invokes.entry(pid).or_default().push((outer_idx as i32, j as i32));
+            if crate::grpc::program_ids::needs_invoke_context(&pid) {
+                invokes.push(pid, (outer_idx as i32, j as i32));
+            }
 
-            // 解析 inner instruction（16字节 discriminator）
-            if let Some(event) = parse_inner_instruction(
+            let event = parse_inner_compiled_instruction_if_supported(
                 &inner_ix.data,
                 &pid,
                 sig,
@@ -116,35 +171,55 @@ pub fn parse_instructions_enhanced(
                 tx_idx,
                 block_us,
                 grpc_us,
+                &inner_ix.accounts,
+                &get_key,
                 filter,
-                is_created_buy,
-            ) {
-                result.push((outer_idx, Some(j), event)); // (outer_idx, Some(inner_idx), event)
+            )
+            .or_else(|| {
+                parse_inner_instruction(
+                    &inner_ix.data,
+                    &pid,
+                    sig,
+                    slot,
+                    tx_idx,
+                    block_us,
+                    grpc_us,
+                    filter,
+                    is_created_buy,
+                )
+            });
+
+            if let Some(event) = event {
+                result.push(IndexedInstructionEvent {
+                    outer_idx,
+                    inner_idx: Some(j),
+                    stack_height: inner_ix.stack_height,
+                    is_dlmm_event_cpi: pid == crate::instr::program_ids::METEORA_DLMM_PROGRAM_ID
+                        && crate::instr::all_inner::meteora_dlmm::is_event_cpi(&inner_ix.data),
+                    event,
+                });
             }
         }
     }
 
     // 步骤 3: 合并相关事件（instruction + inner instruction）
-    let mut merged = merge_instruction_events(result);
-    enrich_pumpfun_same_tx_post_merge(&mut merged);
-
-    for e in merged.iter_mut() {
-        if let Some(m) = e.metadata_mut() {
-            m.recent_blockhash = recent_blockhash.clone();
-        }
-    }
+    let mut final_result = merge_instruction_events(result);
+    enrich_pumpfun_same_tx_post_merge(&mut final_result);
 
     // 步骤 4: 填充账户上下文（invokes 与 fill_data 均使用 Pubkey 键，无堆泄漏）
-    let mut final_result = Vec::with_capacity(merged.len());
-    for mut event in merged {
-        crate::core::account_dispatcher::fill_accounts_with_owned_keys(
-            &mut event,
+    for event in &mut final_result {
+        crate::core::account_dispatcher::fill_accounts_with_invoke_context(
+            event,
             meta,
             transaction,
             &invokes,
         );
-        crate::core::common_filler::fill_data(&mut event, meta, transaction, &invokes);
-        final_result.push(event);
+        crate::core::common_filler::fill_data_with_invoke_context(
+            event,
+            meta,
+            transaction,
+            &invokes,
+        );
     }
 
     final_result
@@ -154,11 +229,8 @@ pub fn parse_instructions_enhanced(
 // 辅助函数
 // ============================================================================
 
-/// 解析单个主指令（outer instruction）
-///
-/// 主指令使用 8 字节 discriminator
 #[inline(always)]
-fn parse_outer_instruction<'a>(
+fn parse_compiled_instruction<'a>(
     data: &[u8],
     program_id: &Pubkey,
     sig: Signature,
@@ -169,7 +241,6 @@ fn parse_outer_instruction<'a>(
     account_indices: &[u8],
     get_key: &dyn Fn(usize) -> Option<&'a Vec<u8>>,
     filter: Option<&EventTypeFilter>,
-    _is_created_buy: bool,
 ) -> Option<DexEvent> {
     // 检查指令数据长度（至少8字节 discriminator）
     if data.len() < 8 {
@@ -206,6 +277,75 @@ fn parse_outer_instruction<'a>(
             data, &accounts, sig, slot, tx_idx, block_us, grpc_us, filter, program_id,
         )
     }
+}
+
+#[inline(always)]
+fn is_supported_inner_compiled_instruction(data: &[u8], program_id: &Pubkey) -> bool {
+    crate::instr::normal_instruction_data_may_parse(program_id, data)
+}
+
+#[inline(always)]
+fn parse_inner_compiled_instruction_if_supported<'a>(
+    data: &[u8],
+    program_id: &Pubkey,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    account_indices: &[u8],
+    get_key: &dyn Fn(usize) -> Option<&'a Vec<u8>>,
+    filter: Option<&EventTypeFilter>,
+) -> Option<DexEvent> {
+    if !is_supported_inner_compiled_instruction(data, program_id) {
+        return None;
+    }
+    parse_compiled_instruction(
+        data,
+        program_id,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        account_indices,
+        get_key,
+        filter,
+    )
+}
+
+/// 解析单个主指令（outer instruction）
+///
+/// 主指令使用 8 字节 discriminator
+#[inline(always)]
+fn parse_outer_instruction<'a>(
+    data: &[u8],
+    program_id: &Pubkey,
+    sig: Signature,
+    slot: u64,
+    tx_idx: u64,
+    block_us: Option<i64>,
+    grpc_us: i64,
+    account_indices: &[u8],
+    get_key: &dyn Fn(usize) -> Option<&'a Vec<u8>>,
+    filter: Option<&EventTypeFilter>,
+    _is_created_buy: bool,
+) -> Option<DexEvent> {
+    if !crate::instr::normal_instruction_data_may_parse(program_id, data) {
+        return None;
+    }
+    parse_compiled_instruction(
+        data,
+        program_id,
+        sig,
+        slot,
+        tx_idx,
+        block_us,
+        grpc_us,
+        account_indices,
+        get_key,
+        filter,
+    )
 }
 
 /// 解析单个 inner instruction
@@ -351,7 +491,7 @@ fn parse_inner_instruction(
 /// 3. 同一 outer 下若有多个 inner，依次链式合并进同一条事件，再输出
 /// 4. 合并后返回更完整的事件
 #[inline(always)]
-fn merge_instruction_events(events: Vec<(usize, Option<usize>, DexEvent)>) -> Vec<DexEvent> {
+fn merge_instruction_events(events: Vec<IndexedInstructionEvent>) -> Vec<DexEvent> {
     if events.is_empty() {
         return Vec::new();
     }
@@ -359,45 +499,111 @@ fn merge_instruction_events(events: Vec<(usize, Option<usize>, DexEvent)>) -> Ve
     // 按 (outer_idx, inner_idx) 排序，确保顺序：同一 outer 下 **主指令在前、inner 在后**
     // （`None` 若用 MAX 会把 outer 排到 inner 后面，导致无法 merge）
     let mut events = events;
-    events.sort_by_key(|(outer, inner, _)| (*outer, inner.map_or(0, |i| i + 1)));
+    events.sort_unstable_by_key(|event| {
+        (event.outer_idx, event.inner_idx.map_or(0, |inner_idx| inner_idx + 1))
+    });
 
     let mut result = Vec::with_capacity(events.len());
-    let mut pending_outer: Option<(usize, DexEvent)> = None;
+    let mut outer_target: Option<(usize, usize)> = None;
+    // Solana's instruction stack is shallow; keep DLMM parent candidates on
+    // the stack so nested DLMM CPIs do not require a hot-path heap allocation.
+    let mut dlmm_targets: [Option<(usize, Option<u32>, usize)>; 8] = [None; 8];
+    let mut dlmm_targets_len = 0usize;
 
-    for (outer_idx, inner_idx, event) in events {
+    for indexed in events {
+        let IndexedInstructionEvent {
+            outer_idx,
+            inner_idx,
+            stack_height,
+            is_dlmm_event_cpi,
+            event,
+        } = indexed;
         match inner_idx {
             None => {
-                // 这是一个 outer instruction
-                // 先处理之前的 pending_outer
-                if let Some((_, outer_event)) = pending_outer.take() {
-                    result.push(outer_event);
+                let is_dlmm = is_dlmm_event(&event);
+                let target_idx = result.len();
+                result.push(event);
+                outer_target = Some((outer_idx, target_idx));
+                dlmm_targets_len = 0;
+                if is_dlmm {
+                    dlmm_targets[0] = Some((outer_idx, stack_height, target_idx));
+                    dlmm_targets_len = 1;
                 }
-                // 保存当前的 outer instruction，等待可能的 inner instruction
-                pending_outer = Some((outer_idx, event));
             }
             Some(_) => {
-                // 这是一个 inner instruction
-                if let Some((pending_outer_idx, mut outer_event)) = pending_outer.take() {
-                    if pending_outer_idx == outer_idx {
-                        // 合并进当前 outer（可多次：多段 inner 链式叠在同一条事件上）
-                        merge_events(&mut outer_event, event);
-                        pending_outer = Some((outer_idx, outer_event));
+                if is_dlmm_event_cpi {
+                    let target = (0..dlmm_targets_len).rev().find_map(|idx| {
+                        let (target_outer, target_height, target_idx) = dlmm_targets[idx]?;
+                        let is_direct_child = match (target_height, stack_height) {
+                            (Some(parent), Some(child)) => child == parent + 1,
+                            _ => true,
+                        };
+                        (target_outer == outer_idx && is_direct_child).then_some((idx, target_idx))
+                    });
+                    if let Some((candidate_idx, target_idx)) = target {
+                        dlmm_targets_len = candidate_idx + 1;
+                        if target_idx < result.len() {
+                            let mut unmerged = None;
+                            if try_merge_events(&mut result[target_idx], event, &mut unmerged) {
+                                continue;
+                            }
+                            result.push(unmerged.expect("unmerged event remains available"));
+                            continue;
+                        }
+                    }
+                    result.push(event);
+                    continue;
+                }
+
+                let is_dlmm = is_dlmm_event(&event);
+                let target_idx = if let Some((target_outer, target_idx)) = outer_target {
+                    if target_outer == outer_idx {
+                        let mut unmerged = None;
+                        if try_merge_events(&mut result[target_idx], event, &mut unmerged) {
+                            target_idx
+                        } else {
+                            let target_idx = result.len();
+                            result.push(unmerged.expect("unmerged event remains available"));
+                            target_idx
+                        }
                     } else {
-                        // 不匹配，分别保留
-                        result.push(outer_event);
+                        let target_idx = result.len();
                         result.push(event);
+                        target_idx
                     }
                 } else {
-                    // 没有 pending outer，直接添加 inner event
+                    let target_idx = result.len();
                     result.push(event);
+                    target_idx
+                };
+
+                if is_dlmm {
+                    if let Some(height) = stack_height {
+                        while dlmm_targets_len > 0 {
+                            let Some((candidate_outer, candidate_height, _)) =
+                                dlmm_targets[dlmm_targets_len - 1]
+                            else {
+                                break;
+                            };
+                            if candidate_outer != outer_idx
+                                || candidate_height.is_some_and(|candidate| candidate >= height)
+                            {
+                                dlmm_targets_len -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        dlmm_targets_len = 0;
+                    }
+                    if dlmm_targets_len < dlmm_targets.len() {
+                        dlmm_targets[dlmm_targets_len] =
+                            Some((outer_idx, stack_height, target_idx));
+                        dlmm_targets_len += 1;
+                    }
                 }
             }
         }
-    }
-
-    // 处理最后一个 pending_outer
-    if let Some((_, outer_event)) = pending_outer {
-        result.push(outer_event);
     }
 
     result
@@ -439,7 +645,9 @@ fn should_parse_instructions(filter: Option<&EventTypeFilter>) -> bool {
 mod tests {
     use super::*;
     use crate::core::events::{PUMPFUN_SOLSCAN_SOL_QUOTE_MINT, PUMPFUN_WSOL_QUOTE_MINT};
-    use yellowstone_grpc_proto::prelude::{CompiledInstruction, Message, MessageHeader};
+    use yellowstone_grpc_proto::prelude::{
+        CompiledInstruction, InnerInstruction, InnerInstructions, Message, MessageHeader,
+    };
 
     fn pk(s: &str) -> Pubkey {
         s.parse().unwrap()
@@ -451,6 +659,10 @@ mod tests {
 
     fn pubkey_bytes(key: Pubkey) -> Vec<u8> {
         key.to_bytes().to_vec()
+    }
+
+    fn decode_b58(s: &str) -> Vec<u8> {
+        bs58::decode(s).into_vec().unwrap()
     }
 
     fn str_arg(s: &str, out: &mut Vec<u8>) {
@@ -519,6 +731,7 @@ mod tests {
                 }],
                 versioned: true,
                 address_table_lookups: Vec::new(),
+                config: None,
             }),
         };
         (meta, Some(tx))
@@ -600,6 +813,8 @@ mod tests {
                     quote_vault: e.quote_vault,
                     quote_token_program: e.quote_token_program,
                     virtual_quote_reserves: e.virtual_quote_reserves,
+                    creator_fee_bps: e.creator_fee_bps,
+                    is_holder_reward: e.is_holder_reward,
                     ix_name: e.ix_name.clone(),
                     is_mayhem_mode: e.is_mayhem_mode,
                     is_cashback_enabled: e.is_cashback_enabled,
@@ -700,8 +915,20 @@ mod tests {
         });
 
         let events = vec![
-            (0, None, outer_event),    // outer instruction at index 0
-            (0, Some(0), inner_event), // inner instruction at index 0
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: None,
+                stack_height: Some(1),
+                is_dlmm_event_cpi: false,
+                event: outer_event,
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(0),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: inner_event,
+            },
         ];
 
         let result = merge_instruction_events(events);
@@ -756,8 +983,29 @@ mod tests {
             ..Default::default()
         });
 
-        let events =
-            vec![(0, None, outer_event), (0, Some(0), inner_trade), (0, Some(1), inner_fee_only)];
+        let events = vec![
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: None,
+                stack_height: Some(1),
+                is_dlmm_event_cpi: false,
+                event: outer_event,
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(0),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: inner_trade,
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(1),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: inner_fee_only,
+            },
+        ];
 
         let result = merge_instruction_events(events);
         assert_eq!(result.len(), 1);
@@ -768,6 +1016,238 @@ mod tests {
             assert_eq!(trade.fee_recipient, fee);
         } else {
             panic!("Expected PumpFunTrade event");
+        }
+    }
+
+    fn dlmm_swap(pool: Pubkey, amount_in: u64, amount_out: u64) -> DexEvent {
+        DexEvent::MeteoraDlmmSwap(MeteoraDlmmSwapEvent {
+            metadata: EventMetadata::default(),
+            token_x_mint: Pubkey::default(),
+            token_y_mint: Pubkey::default(),
+            user_token_in: Pubkey::default(),
+            user_token_out: Pubkey::default(),
+            min_amount_out: 0,
+            pool,
+            from: Pubkey::default(),
+            start_bin_id: 0,
+            end_bin_id: 0,
+            amount_in,
+            amount_out,
+            swap_for_y: false,
+            fee: 0,
+            protocol_fee: 0,
+            fee_bps: 0,
+            host_fee: 0,
+        })
+    }
+
+    fn dlmm_add_liquidity() -> DexEvent {
+        DexEvent::MeteoraDlmmAddLiquidity(MeteoraDlmmAddLiquidityEvent {
+            metadata: EventMetadata::default(),
+            pool: Pubkey::default(),
+            from: Pubkey::default(),
+            position: Pubkey::default(),
+            amounts: [0; 2],
+            active_bin_id: 0,
+        })
+    }
+
+    #[test]
+    fn merge_preserves_unrelated_inner_events() {
+        let events = vec![
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: None,
+                stack_height: Some(1),
+                is_dlmm_event_cpi: false,
+                event: dlmm_swap(Pubkey::default(), 0, 0),
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(0),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: dlmm_add_liquidity(),
+            },
+        ];
+
+        let result = merge_instruction_events(events);
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], DexEvent::MeteoraDlmmSwap(_)));
+        assert!(matches!(result[1], DexEvent::MeteoraDlmmAddLiquidity(_)));
+    }
+
+    #[test]
+    fn merge_dlmm_inner_instruction_with_direct_event_cpi() {
+        let first_pool = Pubkey::new_unique();
+        let second_pool = Pubkey::new_unique();
+        let events = vec![
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(0),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: dlmm_swap(first_pool, 1, 0),
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(1),
+                stack_height: Some(3),
+                is_dlmm_event_cpi: true,
+                event: dlmm_swap(first_pool, 10, 9),
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(2),
+                stack_height: Some(2),
+                is_dlmm_event_cpi: false,
+                event: dlmm_swap(second_pool, 2, 0),
+            },
+            IndexedInstructionEvent {
+                outer_idx: 0,
+                inner_idx: Some(3),
+                stack_height: Some(3),
+                is_dlmm_event_cpi: true,
+                event: dlmm_swap(second_pool, 20, 18),
+            },
+        ];
+
+        let result = merge_instruction_events(events);
+        assert_eq!(result.len(), 2);
+        let DexEvent::MeteoraDlmmSwap(first) = &result[0] else { panic!("swap") };
+        let DexEvent::MeteoraDlmmSwap(second) = &result[1] else { panic!("swap") };
+        assert_eq!((first.pool, first.amount_in, first.amount_out), (first_pool, 10, 9));
+        assert_eq!((second.pool, second.amount_in, second.amount_out), (second_pool, 20, 18));
+    }
+
+    #[test]
+    fn grpc_pumpswap_inner_create_pool_cpi_reads_cashback_flag() {
+        let signature = "v5rg9RMc6D4pMsAqD8TrmXGFwHQBePFDWXBbtsQmP5gttLBKvExSEiPcGMipaDWP61VdWaxEyJCr7oXPxFH4DQf";
+        let static_keys = [
+            "9C4nRvhhVquCKATjDCx5FKvNS9PNgNqgyWy9AcoDjYv5",
+            "CRfzaig7jyogshSi4Lydsg3RXm3Ta9Gg4oMVTV7UcYej",
+            "6sFov2ot9waASAUCLf3hUDc9UXSxw36nE1ehbJqA37XS",
+            "F4brPQAt8DR6bN7DLhXzyLUJ77NFYUCokxmnS7cmgvki",
+            "HJKRc3JtgmattaPBFp1XqAhymk9FtJQjZZWZ9LtCMDLC",
+            "4pVPfQmUZPDUgzTC5VAuad82wpaf4yzvSWVvFQBs73sv",
+            "2m3hPFQ17Vn2gdeoxCr4M8Tx9jcLtTjiLtqnpyz7Tizo",
+            "HC5ix2JxmZQ9sNiPFbFsFuXfu7GHt2RT2UoQVFWskfhu",
+            "GywAHNZRk8qjAiekaXgk5mBqweMibW31KGnUHzMN5Ht4",
+            "H1e1uYxxkSeJpjKeqajizBTCMXc4wun1vqgNGiFgsXru",
+            "56pZVJ6T5Dy3MZ56YcAcHM9YqEbyustsjS9MNNNh16cC",
+            "GzZSwyjsKKmMHtEdMggC9fB1bowTm3Vzhs6hxMQfviVu",
+            "ComputeBudget111111111111111111111111111111",
+            "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+            "9JmruaWd8Dscxs1GBVbnckGWWsoVdJwg9DDFGFW9pump",
+            "SysvarRent111111111111111111111111111111111",
+        ];
+        let loaded_writable = ["39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"];
+        let loaded_readonly = [
+            "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+            "So11111111111111111111111111111111111111112",
+            "11111111111111111111111111111111",
+            "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+            "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+            "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+            "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+        ];
+        let meta = TransactionStatusMeta {
+            loaded_writable_addresses: loaded_writable.iter().map(|s| pubkey_bytes(pk(s))).collect(),
+            loaded_readonly_addresses: loaded_readonly.iter().map(|s| pubkey_bytes(pk(s))).collect(),
+            inner_instructions: vec![InnerInstructions {
+                index: 2,
+                instructions: vec![InnerInstruction {
+                    program_id_index: 20,
+                    accounts: vec![4, 21, 5, 14, 18, 8, 6, 7, 9, 10, 11, 19, 22, 22, 23, 24, 25, 20],
+                    data: decode_b58(
+                        "iPiwDbPRj3YavFpj3AxMZtPvSSQKdH3Uw8kaPUDj2NXDsWjrQx5ndF39nxYypLG2dVKDtBiBz3jsJ6gvzU",
+                    ),
+                    stack_height: Some(2),
+                }],
+            }],
+            ..Default::default()
+        };
+        let tx = Some(Transaction {
+            signatures: vec![pk("11111111111111111111111111111111").as_ref().to_vec()],
+            message: Some(Message {
+                header: Some(MessageHeader::default()),
+                account_keys: static_keys.iter().map(|s| pubkey_bytes(pk(s))).collect(),
+                recent_blockhash: vec![0; 32],
+                instructions: vec![
+                    CompiledInstruction { program_id_index: 12, accounts: vec![], data: vec![0] },
+                    CompiledInstruction { program_id_index: 12, accounts: vec![], data: vec![0] },
+                    CompiledInstruction { program_id_index: 13, accounts: vec![], data: vec![0] },
+                ],
+                versioned: true,
+                address_table_lookups: Vec::new(),
+                config: None,
+            }),
+        });
+
+        let events = parse_instructions_enhanced(
+            &meta,
+            &tx,
+            signature.parse().unwrap(),
+            427_039_576,
+            0,
+            Some(1_781_687_252_000_000),
+            789,
+            None,
+        );
+
+        assert_eq!(events.len(), 1, "{signature}");
+        match &events[0] {
+            DexEvent::PumpSwapCreatePool(e) => {
+                assert_eq!(e.index, 0, "{signature}");
+                assert_eq!(e.base_amount_in, 206_900_000_000_000, "{signature}");
+                assert_eq!(e.quote_amount_in, 84_990_359_912, "{signature}");
+                assert_eq!(
+                    e.coin_creator,
+                    pk("4DrtsW86GarGJJeYrBwYCjoyMgDPG95QWSGhFHvCkU2s"),
+                    "{signature}"
+                );
+                assert!(!e.is_mayhem_mode, "{signature}");
+                assert!(e.is_cashback_coin, "{signature}");
+                assert_eq!(
+                    e.pool,
+                    pk("HJKRc3JtgmattaPBFp1XqAhymk9FtJQjZZWZ9LtCMDLC"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.creator,
+                    pk("4pVPfQmUZPDUgzTC5VAuad82wpaf4yzvSWVvFQBs73sv"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.base_mint,
+                    pk("9JmruaWd8Dscxs1GBVbnckGWWsoVdJwg9DDFGFW9pump"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.quote_mint,
+                    pk("So11111111111111111111111111111111111111112"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.lp_mint,
+                    pk("GywAHNZRk8qjAiekaXgk5mBqweMibW31KGnUHzMN5Ht4"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.user_base_token_account,
+                    pk("2m3hPFQ17Vn2gdeoxCr4M8Tx9jcLtTjiLtqnpyz7Tizo"),
+                    "{signature}"
+                );
+                assert_eq!(
+                    e.user_quote_token_account,
+                    pk("HC5ix2JxmZQ9sNiPFbFsFuXfu7GHt2RT2UoQVFWskfhu"),
+                    "{signature}"
+                );
+            }
+            other => panic!("expected PumpSwapCreatePool for {signature}, got {other:?}"),
         }
     }
 

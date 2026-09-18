@@ -26,6 +26,19 @@ use crate::core::events::*;
 /// - 预期开销 < 10ns
 #[inline(always)]
 pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
+    let mut unmerged = None;
+    let _ = try_merge_events(base, inner, &mut unmerged);
+}
+
+/// Try to merge `inner` into `base` without allocating or returning the large
+/// event enum by value. On mismatch, the untouched event is written to
+/// `unmerged` for the caller to recover.
+#[inline(always)]
+pub fn try_merge_events(
+    base: &mut DexEvent,
+    inner: DexEvent,
+    unmerged: &mut Option<DexEvent>,
+) -> bool {
     use DexEvent::*;
 
     match (base, inner) {
@@ -136,15 +149,32 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
         (MeteoraDammV2InitializePool(b), MeteoraDammV2InitializePool(i)) => merge_generic(b, i),
         (MeteoraDammV2CreatePosition(b), MeteoraDammV2CreatePosition(i)) => merge_generic(b, i),
         (MeteoraDammV2ClosePosition(b), MeteoraDammV2ClosePosition(i)) => merge_generic(b, i),
+        (MeteoraDammV2UpdateDelegatePermission(b), MeteoraDammV2UpdateDelegatePermission(i)) => {
+            merge_generic(b, i)
+        }
+        (
+            MeteoraDammV2WithdrawDeadLiquidityReward(b),
+            MeteoraDammV2WithdrawDeadLiquidityReward(i),
+        ) => merge_generic(b, i),
+        (MeteoraDammV2CreateConfig(b), MeteoraDammV2CreateConfig(i)) => merge_generic(b, i),
+        (MeteoraDammV2CreateDynamicConfig(b), MeteoraDammV2CreateDynamicConfig(i)) => {
+            merge_generic(b, i)
+        }
 
         // ========== Meteora DLMM 系列 ==========
-        (MeteoraDlmmSwap(b), MeteoraDlmmSwap(i)) => merge_generic(b, i),
+        (MeteoraDlmmSwap(b), MeteoraDlmmSwap(i)) => merge_dlmm_swap(b, i),
         (MeteoraDlmmAddLiquidity(b), MeteoraDlmmAddLiquidity(i)) => merge_generic(b, i),
         (MeteoraDlmmRemoveLiquidity(b), MeteoraDlmmRemoveLiquidity(i)) => merge_generic(b, i),
-        (MeteoraDlmmInitializePool(b), MeteoraDlmmInitializePool(i)) => merge_generic(b, i),
+        (MeteoraDlmmInitializePool(b), MeteoraDlmmInitializePool(i)) => {
+            merge_dlmm_initialize_pool(b, i)
+        }
         (MeteoraDlmmInitializeBinArray(b), MeteoraDlmmInitializeBinArray(i)) => merge_generic(b, i),
-        (MeteoraDlmmCreatePosition(b), MeteoraDlmmCreatePosition(i)) => merge_generic(b, i),
-        (MeteoraDlmmClosePosition(b), MeteoraDlmmClosePosition(i)) => merge_generic(b, i),
+        (MeteoraDlmmCreatePosition(b), MeteoraDlmmCreatePosition(i)) => {
+            merge_dlmm_create_position(b, i)
+        }
+        (MeteoraDlmmClosePosition(b), MeteoraDlmmClosePosition(i)) => {
+            merge_dlmm_close_position(b, i)
+        }
         (MeteoraDlmmClaimFee(b), MeteoraDlmmClaimFee(i)) => merge_generic(b, i),
 
         // ========== RaydiumLaunchlab 系列 ==========
@@ -153,8 +183,13 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
         (RaydiumLaunchlabMigrateAmm(b), RaydiumLaunchlabMigrateAmm(i)) => merge_generic(b, i),
 
         // 其他组合不需要合并（类型不匹配）
-        _ => {}
+        (_, event) => {
+            *unmerged = Some(event);
+            return false;
+        }
     }
+
+    true
 }
 
 /// 通用合并函数 - 对于大多数事件，inner instruction 包含完整数据
@@ -166,6 +201,60 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
 #[inline(always)]
 fn merge_generic<T>(base: &mut T, inner: T) {
     *base = inner;
+}
+
+#[inline(always)]
+fn merge_dlmm_swap(base: &mut MeteoraDlmmSwapEvent, inner: MeteoraDlmmSwapEvent) {
+    let min_amount_out =
+        if inner.min_amount_out != 0 { inner.min_amount_out } else { base.min_amount_out };
+    let user_token_in = if inner.user_token_in != Pubkey::default() {
+        inner.user_token_in
+    } else {
+        base.user_token_in
+    };
+    let user_token_out = if inner.user_token_out != Pubkey::default() {
+        inner.user_token_out
+    } else {
+        base.user_token_out
+    };
+    *base = inner;
+    base.min_amount_out = min_amount_out;
+    base.user_token_in = user_token_in;
+    base.user_token_out = user_token_out;
+}
+
+#[inline(always)]
+fn merge_dlmm_initialize_pool(
+    base: &mut MeteoraDlmmInitializePoolEvent,
+    inner: MeteoraDlmmInitializePoolEvent,
+) {
+    let creator = base.creator;
+    let active_bin_id = base.active_bin_id;
+    *base = inner;
+    base.creator = creator;
+    base.active_bin_id = active_bin_id;
+}
+
+#[inline(always)]
+fn merge_dlmm_create_position(
+    base: &mut MeteoraDlmmCreatePositionEvent,
+    inner: MeteoraDlmmCreatePositionEvent,
+) {
+    let lower_bin_id = base.lower_bin_id;
+    let width = base.width;
+    *base = inner;
+    base.lower_bin_id = lower_bin_id;
+    base.width = width;
+}
+
+#[inline(always)]
+fn merge_dlmm_close_position(
+    base: &mut MeteoraDlmmClosePositionEvent,
+    inner: MeteoraDlmmClosePositionEvent,
+) {
+    let pool = base.pool;
+    *base = inner;
+    base.pool = pool;
 }
 
 // ============================================================================
@@ -257,6 +346,8 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
         put_u64_if_nonzero(&mut base.virtual_quote_reserves, inner.virtual_quote_reserves);
         put_u64_if_nonzero(&mut base.real_quote_reserves, inner.real_quote_reserves);
         base.is_cashback_coin |= inner.is_cashback_coin;
+        base.holder_rewards_bps = inner.holder_rewards_bps;
+        base.holder_rewards = inner.holder_rewards;
     } else {
         put_u64_if_nonzero(&mut base.fee, inner.fee);
         put_u64_if_nonzero(&mut base.creator_fee, inner.creator_fee);
@@ -280,6 +371,8 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
         put_u64_if_nonzero(&mut base.quote_amount, inner.quote_amount);
         put_u64_if_nonzero(&mut base.virtual_quote_reserves, inner.virtual_quote_reserves);
         put_u64_if_nonzero(&mut base.real_quote_reserves, inner.real_quote_reserves);
+        put_u64_if_nonzero(&mut base.holder_rewards_bps, inner.holder_rewards_bps);
+        put_u64_if_nonzero(&mut base.holder_rewards, inner.holder_rewards);
         put_i64_if_nonzero(&mut base.timestamp, inner.timestamp);
         put_i64_if_nonzero(&mut base.last_update_timestamp, inner.last_update_timestamp);
         if !inner.ix_name.is_empty() {
@@ -356,6 +449,8 @@ fn merge_pumpfun_create(base: &mut PumpFunCreateTokenEvent, inner: PumpFunCreate
     put_pk_if_set(&mut base.quote_vault, inner.quote_vault);
     put_pk_if_set(&mut base.quote_token_program, inner.quote_token_program);
     put_u64_if_nonzero(&mut base.virtual_quote_reserves, inner.virtual_quote_reserves);
+    put_u64_if_nonzero(&mut base.creator_fee_bps, inner.creator_fee_bps);
+    base.is_holder_reward |= inner.is_holder_reward;
 }
 
 /// 合并 PumpFun CreateV2 事件
@@ -393,6 +488,8 @@ fn merge_pumpfun_create_v2(base: &mut PumpFunCreateV2TokenEvent, inner: PumpFunC
     put_pk_if_set(&mut base.event_authority, inner.event_authority);
     put_pk_if_set(&mut base.program, inner.program);
     put_pk_if_set(&mut base.observed_fee_recipient, inner.observed_fee_recipient);
+    put_u64_if_nonzero(&mut base.creator_fee_bps, inner.creator_fee_bps);
+    base.is_holder_reward |= inner.is_holder_reward;
 }
 
 /// 合并 PumpFun Migrate 事件
@@ -564,11 +661,15 @@ fn merge_pumpfun_create_log_preferred(
     fill_pk(&mut log.quote_vault, ix.quote_vault);
     fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.creator_fee_bps == 0 {
+        log.creator_fee_bps = ix.creator_fee_bps;
+    }
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
     }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
+    log.is_holder_reward |= ix.is_holder_reward;
 }
 
 #[inline]
@@ -595,11 +696,15 @@ fn merge_pumpfun_create_v2_into_create_log_preferred(
     fill_pk(&mut log.quote_vault, ix.quote_vault);
     fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.creator_fee_bps == 0 {
+        log.creator_fee_bps = ix.creator_fee_bps;
+    }
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
     }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
+    log.is_holder_reward |= ix.is_holder_reward;
 }
 
 #[inline]
@@ -626,11 +731,15 @@ fn merge_pumpfun_create_into_create_v2_log_preferred(
     fill_pk(&mut log.quote_vault, ix.quote_vault);
     fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.creator_fee_bps == 0 {
+        log.creator_fee_bps = ix.creator_fee_bps;
+    }
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
     }
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_enabled |= ix.is_cashback_enabled;
+    log.is_holder_reward |= ix.is_holder_reward;
 }
 
 #[inline]
@@ -649,6 +758,9 @@ fn merge_pumpfun_create_v2_log_preferred(
     fill_pk(&mut log.quote_vault, ix.quote_vault);
     fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    if log.creator_fee_bps == 0 {
+        log.creator_fee_bps = ix.creator_fee_bps;
+    }
     if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
         log.ix_name = ix.ix_name;
     }
@@ -665,6 +777,7 @@ fn merge_pumpfun_create_v2_log_preferred(
     fill_pk(&mut log.event_authority, ix.event_authority);
     fill_pk(&mut log.program, ix.program);
     fill_pk(&mut log.observed_fee_recipient, ix.observed_fee_recipient);
+    log.is_holder_reward |= ix.is_holder_reward;
 }
 
 #[inline]
@@ -756,6 +869,8 @@ fn merge_raydium_amm_v4_swap_log_preferred(
     fill_pk(&mut log.serum_vault_signer, ix.serum_vault_signer);
     fill_pk(&mut log.user_source_token_account, ix.user_source_token_account);
     fill_pk(&mut log.user_destination_token_account, ix.user_destination_token_account);
+    fill_pk(&mut log.user_source_owner, ix.user_source_owner);
+    fill_pk(&mut log.amm, ix.amm);
 }
 
 #[inline]
@@ -771,6 +886,11 @@ fn merge_pumpswap_create_pool_log_preferred(
     fill_pk(&mut log.coin_creator, ix.coin_creator);
     log.is_mayhem_mode |= ix.is_mayhem_mode;
     log.is_cashback_coin |= ix.is_cashback_coin;
+    if log.creator_fee_bps == 0 {
+        log.creator_fee_bps = ix.creator_fee_bps;
+    }
+    log.can_edit_creator_fee |= ix.can_edit_creator_fee;
+    log.is_holder_reward |= ix.is_holder_reward;
 }
 
 #[inline]
@@ -798,7 +918,16 @@ fn merge_raydium_launchlab_pool_create_log_preferred(
     log: &mut RaydiumLaunchlabPoolCreateEvent,
     ix: RaydiumLaunchlabPoolCreateEvent,
 ) {
+    fill_pk(&mut log.payer, ix.payer);
     fill_pk(&mut log.creator, ix.creator);
+    fill_pk(&mut log.global_config, ix.global_config);
+    fill_pk(&mut log.platform_config, ix.platform_config);
+    fill_pk(&mut log.base_mint, ix.base_mint);
+    fill_pk(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.base_vault, ix.base_vault);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.base_token_program, ix.base_token_program);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
     fill_str_if_empty(&mut log.base_mint_param.name, &ix.base_mint_param.name);
     fill_str_if_empty(&mut log.base_mint_param.symbol, &ix.base_mint_param.symbol);
     fill_str_if_empty(&mut log.base_mint_param.uri, &ix.base_mint_param.uri);
@@ -814,19 +943,34 @@ fn merge_raydium_launchlab_migrate_amm_log_preferred(
     fill_pk(&mut log.user, ix.user);
 }
 
-/// RaydiumLaunchlabTrade 当前无独立「仅 ix 账户」字段；保留占位以便与 dedup 对齐，日后扩展。
 #[inline]
 fn merge_raydium_launchlab_trade_log_preferred(
-    _log: &mut RaydiumLaunchlabTradeEvent,
-    _ix: RaydiumLaunchlabTradeEvent,
+    log: &mut RaydiumLaunchlabTradeEvent,
+    ix: RaydiumLaunchlabTradeEvent,
 ) {
+    fill_pk(&mut log.user, ix.user);
+    fill_pk(&mut log.global_config, ix.global_config);
+    fill_pk(&mut log.platform_config, ix.platform_config);
+    fill_pk(&mut log.user_base_token, ix.user_base_token);
+    fill_pk(&mut log.user_quote_token, ix.user_quote_token);
+    fill_pk(&mut log.base_vault, ix.base_vault);
+    fill_pk(&mut log.quote_vault, ix.quote_vault);
+    fill_pk(&mut log.base_mint, ix.base_mint);
+    fill_pk(&mut log.quote_mint, ix.quote_mint);
+    fill_pk(&mut log.base_token_program, ix.base_token_program);
+    fill_pk(&mut log.quote_token_program, ix.quote_token_program);
+    fill_pk(&mut log.system_program, ix.system_program);
+    fill_pk(&mut log.platform_associated_account, ix.platform_associated_account);
+    fill_pk(&mut log.creator_associated_account, ix.creator_associated_account);
 }
 
 #[inline]
-fn merge_meteora_dlmm_swap_log_preferred(
-    _log: &mut MeteoraDlmmSwapEvent,
-    _ix: MeteoraDlmmSwapEvent,
-) {
+fn merge_meteora_dlmm_swap_log_preferred(log: &mut MeteoraDlmmSwapEvent, ix: MeteoraDlmmSwapEvent) {
+    fill_pk(&mut log.user_token_in, ix.user_token_in);
+    fill_pk(&mut log.user_token_out, ix.user_token_out);
+    if log.min_amount_out == 0 {
+        log.min_amount_out = ix.min_amount_out;
+    }
 }
 
 /// 将 **instruction 路径**解析结果合并进 **log 路径**事件：`log` 保留链上日志权威数值，
@@ -950,7 +1094,78 @@ fn pumpfun_trade_from_ix_variant(ix: DexEvent) -> Option<PumpFunTradeEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incompatible_merge_leaves_both_events_unchanged() {
+        let mut base = DexEvent::Error("base".to_string());
+        let inner = DexEvent::Error("inner".to_string());
+        let mut unmerged = None;
+
+        assert!(!try_merge_events(&mut base, inner, &mut unmerged));
+        assert!(matches!(base, DexEvent::Error(ref message) if message == "base"));
+        assert!(matches!(unmerged, Some(DexEvent::Error(ref message)) if message == "inner"));
+    }
     use solana_sdk::{pubkey::Pubkey, signature::Signature};
+
+    fn dlmm_swap(min_amount_out: u64, amount_out: u64) -> MeteoraDlmmSwapEvent {
+        MeteoraDlmmSwapEvent {
+            metadata: EventMetadata::default(),
+            token_x_mint: Pubkey::default(),
+            token_y_mint: Pubkey::default(),
+            user_token_in: Pubkey::new_unique(),
+            user_token_out: Pubkey::new_unique(),
+            min_amount_out,
+            pool: Pubkey::new_unique(),
+            from: Pubkey::new_unique(),
+            start_bin_id: 0,
+            end_bin_id: 0,
+            amount_in: 200,
+            amount_out,
+            swap_for_y: true,
+            fee: 1,
+            protocol_fee: 0,
+            fee_bps: 25,
+            host_fee: 0,
+        }
+    }
+
+    #[test]
+    fn dlmm_event_merge_keeps_instruction_threshold_and_executed_output() {
+        let base_event = dlmm_swap(100, 0);
+        let expected_user_token_in = base_event.user_token_in;
+        let expected_user_token_out = base_event.user_token_out;
+        let mut inner_event = dlmm_swap(0, 125);
+        inner_event.user_token_in = Pubkey::default();
+        inner_event.user_token_out = Pubkey::default();
+        let mut base = DexEvent::MeteoraDlmmSwap(base_event);
+        let inner = DexEvent::MeteoraDlmmSwap(inner_event);
+
+        assert!(try_merge_events(&mut base, inner, &mut None));
+        let DexEvent::MeteoraDlmmSwap(event) = base else { panic!("swap") };
+        assert_eq!(event.min_amount_out, 100);
+        assert_eq!(event.amount_out, 125);
+        assert_eq!(event.user_token_in, expected_user_token_in);
+        assert_eq!(event.user_token_out, expected_user_token_out);
+    }
+
+    #[test]
+    fn grpc_dlmm_merge_keeps_log_output_and_adds_instruction_threshold() {
+        let mut log_event = dlmm_swap(0, 125);
+        log_event.user_token_in = Pubkey::default();
+        log_event.user_token_out = Pubkey::default();
+        let instruction_event = dlmm_swap(100, 0);
+        let expected_user_token_in = instruction_event.user_token_in;
+        let expected_user_token_out = instruction_event.user_token_out;
+        let mut log = DexEvent::MeteoraDlmmSwap(log_event);
+        let instruction = DexEvent::MeteoraDlmmSwap(instruction_event);
+
+        merge_grpc_instruction_into_log(&mut log, instruction);
+        let DexEvent::MeteoraDlmmSwap(event) = log else { panic!("swap") };
+        assert_eq!(event.min_amount_out, 100);
+        assert_eq!(event.amount_out, 125);
+        assert_eq!(event.user_token_in, expected_user_token_in);
+        assert_eq!(event.user_token_out, expected_user_token_out);
+    }
 
     #[test]
     fn test_merge_pumpfun_trade() {
@@ -979,6 +1194,8 @@ mod tests {
             token_amount: 2000,
             is_buy: true,
             user: Pubkey::new_unique(),
+            holder_rewards_bps: 300,
+            holder_rewards: 400,
             ..Default::default()
         });
 
@@ -990,12 +1207,32 @@ mod tests {
             assert_eq!(trade.sol_amount, 1000);
             assert_eq!(trade.token_amount, 2000);
             assert!(trade.is_buy);
+            assert_eq!(trade.holder_rewards_bps, 300);
+            assert_eq!(trade.holder_rewards, 400);
             // 账户上下文保留
             assert_ne!(trade.bonding_curve, Pubkey::default());
             assert_ne!(trade.associated_bonding_curve, Pubkey::default());
         } else {
             panic!("Expected PumpFunTrade event");
         }
+    }
+
+    #[test]
+    fn merge_pumpfun_trade_non_leg_propagates_holder_rewards() {
+        let mut base = DexEvent::PumpFunTrade(PumpFunTradeEvent::default());
+        let inner = DexEvent::PumpFunTrade(PumpFunTradeEvent {
+            holder_rewards_bps: 300,
+            holder_rewards: 400,
+            ..Default::default()
+        });
+
+        merge_events(&mut base, inner);
+
+        let DexEvent::PumpFunTrade(trade) = base else {
+            panic!("expected PumpFunTrade event");
+        };
+        assert_eq!(trade.holder_rewards_bps, 300);
+        assert_eq!(trade.holder_rewards, 400);
     }
 
     #[test]
@@ -1118,6 +1355,34 @@ mod tests {
     }
 
     #[test]
+    fn dlmm_position_event_keeps_instruction_only_fields() {
+        let pool = Pubkey::new_unique();
+        let position = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let mut base = DexEvent::MeteoraDlmmCreatePosition(MeteoraDlmmCreatePositionEvent {
+            metadata: EventMetadata::default(),
+            pool,
+            position,
+            owner,
+            lower_bin_id: -42,
+            width: 70,
+        });
+        let inner = DexEvent::MeteoraDlmmCreatePosition(MeteoraDlmmCreatePositionEvent {
+            metadata: EventMetadata::default(),
+            pool,
+            position,
+            owner,
+            lower_bin_id: 0,
+            width: 0,
+        });
+
+        assert!(try_merge_events(&mut base, inner, &mut None));
+        let DexEvent::MeteoraDlmmCreatePosition(event) = base else { panic!("position") };
+        assert_eq!(event.lower_bin_id, -42);
+        assert_eq!(event.width, 70);
+    }
+
+    #[test]
     fn grpc_merge_fills_fee_recipient_from_ix_when_log_default() {
         let metadata = EventMetadata {
             signature: Signature::default(),
@@ -1173,5 +1438,43 @@ mod tests {
             }
             _ => panic!("variant preserved"),
         }
+    }
+
+    #[test]
+    fn pumpfun_create_merge_propagates_holder_rewards_fields() {
+        let mut base = DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
+            creator_fee_bps: 125,
+            ..Default::default()
+        });
+        let inner = DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
+            creator_fee_bps: 300,
+            is_holder_reward: true,
+            ..Default::default()
+        });
+
+        merge_events(&mut base, inner);
+
+        let DexEvent::PumpFunCreate(event) = base else { panic!("create") };
+        assert_eq!(event.creator_fee_bps, 300);
+        assert!(event.is_holder_reward);
+    }
+
+    #[test]
+    fn grpc_create_merge_keeps_log_fee_and_adds_instruction_holder_reward() {
+        let mut log = DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
+            creator_fee_bps: 300,
+            ..Default::default()
+        });
+        let instruction = DexEvent::PumpFunCreateV2(PumpFunCreateV2TokenEvent {
+            creator_fee_bps: 500,
+            is_holder_reward: true,
+            ..Default::default()
+        });
+
+        merge_grpc_instruction_into_log(&mut log, instruction);
+
+        let DexEvent::PumpFunCreate(event) = log else { panic!("create") };
+        assert_eq!(event.creator_fee_bps, 300);
+        assert!(event.is_holder_reward);
     }
 }
