@@ -1119,6 +1119,10 @@ pub struct RaydiumCpmmSwapEvent {
     pub base_input: bool,
 
     // === Instruction accounts (swap_base_input; filled by account_filler) ===
+    /// Swap instruction payer (account 0), not the transaction fee payer.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub payer: Pubkey,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     #[serde(default)]
     pub amm_config: Pubkey,

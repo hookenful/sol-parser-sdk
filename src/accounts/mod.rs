@@ -4,6 +4,7 @@ pub mod program_ids;
 pub mod pumpswap;
 pub mod raydium_clmm;
 pub mod raydium_cpmm;
+pub mod raydium_launchlab;
 pub mod rpc_wallet;
 pub mod token;
 pub mod utils;
@@ -66,6 +67,7 @@ pub fn parse_account_unified(
                         | EventType::AccountRaydiumClmmTickArrayState
                         | EventType::AccountRaydiumCpmmAmmConfig
                         | EventType::AccountRaydiumCpmmPoolState
+                        | EventType::AccountRaydiumLaunchlabPlatformConfig
                         | EventType::AccountOrcaWhirlpool
                         | EventType::AccountOrcaPosition
                         | EventType::AccountOrcaTickArray
@@ -120,6 +122,21 @@ pub fn parse_account_unified(
         if should_parse {
             let event = filter_parsed_event(
                 raydium_cpmm::parse_account(account, metadata.clone()),
+                event_type_filter,
+            );
+            if event.is_some() {
+                return event;
+            }
+        }
+        return None;
+    }
+    if account.owner == crate::instr::program_ids::RAYDIUM_LAUNCHLAB_PROGRAM_ID {
+        let should_parse = event_type_filter.is_none_or(|filter| {
+            filter.should_include(crate::grpc::EventType::AccountRaydiumLaunchlabPlatformConfig)
+        });
+        if should_parse {
+            let event = filter_parsed_event(
+                raydium_launchlab::parse_account(account, metadata.clone()),
                 event_type_filter,
             );
             if event.is_some() {

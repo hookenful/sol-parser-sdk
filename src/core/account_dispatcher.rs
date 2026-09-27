@@ -508,21 +508,35 @@ fn fill_accounts_with_lookup<L: InvokeLookup + ?Sized>(
         }
 
         // Raydium CPMM
-        // Raydium CPMM — poolState is account index 3.
+        // Raydium CPMM — poolState is account index 3. Accounts, including the
+        // swap payer, come only from this event's own pool invocation, never
+        // from the account-count fallback, which could pick a sibling swap.
         DexEvent::RaydiumCpmmSwap(e) => {
-            let pool = e.pool_id;
-            fill_event_accounts_anchored_at!(
-                e,
-                meta,
-                transaction,
-                program_invokes,
-                &RAYDIUM_CPMM_PROGRAM,
-                3,
-                &pool,
-                |get: &AccountGetter<'_>| {
-                    account_fillers::raydium::fill_cpmm_swap_accounts(e, get);
+            if let Some(invokes) = program_invokes.get_invokes(&RAYDIUM_CPMM_PROGRAM) {
+                let account_keys = transaction
+                    .as_ref()
+                    .and_then(|tx| tx.message.as_ref())
+                    .map(|msg| &msg.account_keys);
+                let pool = e.pool_id;
+                if let Some(invoke) = find_instruction_invoke_matching_anchor(
+                    invokes,
+                    meta,
+                    transaction,
+                    account_keys,
+                    3,
+                    &pool,
+                ) {
+                    fill_event_accounts_with_invoke!(
+                        e,
+                        meta,
+                        transaction,
+                        invoke,
+                        |get: &AccountGetter<'_>| {
+                            account_fillers::raydium::fill_cpmm_swap_accounts(e, get);
+                        }
+                    );
                 }
-            );
+            }
         }
         DexEvent::RaydiumCpmmDeposit(e) => {
             fill_event_accounts!(
