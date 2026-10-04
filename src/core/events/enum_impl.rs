@@ -67,6 +67,7 @@ pub enum DexEvent {
     RaydiumLaunchlabTrade(RaydiumLaunchlabTradeEvent),
     RaydiumLaunchlabPoolCreate(RaydiumLaunchlabPoolCreateEvent),
     RaydiumLaunchlabMigrateAmm(RaydiumLaunchlabMigrateAmmEvent),
+    RaydiumLaunchlabPlatformConfigAccount(Box<RaydiumLaunchlabPlatformConfigAccountEvent>),
 
     // Raydium CLMM 事件
     RaydiumClmmSwap(RaydiumClmmSwapEvent),
@@ -214,6 +215,7 @@ impl DexEvent {
             DexEvent::RaydiumLaunchlabTrade(e) => &e.metadata,
             DexEvent::RaydiumLaunchlabPoolCreate(e) => &e.metadata,
             DexEvent::RaydiumLaunchlabMigrateAmm(e) => &e.metadata,
+            DexEvent::RaydiumLaunchlabPlatformConfigAccount(e) => &e.metadata,
 
             // Raydium CLMM 事件
             DexEvent::RaydiumClmmSwap(e) => &e.metadata,
@@ -346,6 +348,7 @@ impl DexEvent {
             DexEvent::RaydiumLaunchlabTrade(e) => Some(&mut e.metadata),
             DexEvent::RaydiumLaunchlabPoolCreate(e) => Some(&mut e.metadata),
             DexEvent::RaydiumLaunchlabMigrateAmm(e) => Some(&mut e.metadata),
+            DexEvent::RaydiumLaunchlabPlatformConfigAccount(e) => Some(&mut e.metadata),
             DexEvent::RaydiumClmmSwap(e) => Some(&mut e.metadata),
             DexEvent::RaydiumClmmCreatePool(e) => Some(&mut e.metadata),
             DexEvent::RaydiumClmmOpenPosition(e) => Some(&mut e.metadata),

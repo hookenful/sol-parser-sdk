@@ -2070,6 +2070,13 @@ mod tests {
             Some(&pumpfun_buy_filter),
         ));
 
+        let pumpfun_migrate_filter = EventTypeFilter::include_only(vec![EventType::PumpFunMigrate]);
+        assert!(filter_allows_discriminator(
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+            discriminators::PUMPFUN_MIGRATE,
+            Some(&pumpfun_migrate_filter),
+        ));
+
         let dbc_filter = EventTypeFilter::include_only(vec![EventType::MeteoraDbcSwap]);
         assert!(filter_allows_discriminator(
             Some(&program_ids::METEORA_DBC_PROGRAM_ID),
@@ -2117,6 +2124,43 @@ mod tests {
                 assert_eq!(trade.real_token_reserves, 772_157_862_955_447);
             }
             other => panic!("expected PumpFunBuy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn program_scoped_pumpfun_migrate_filter_parses_migrate_log() {
+        let log = "Program data: velduVyU6pR5syl9Y/fz65admv7nJIovNlWDCH2Y954qauspuQDisk1l6YMA+34A5o/SVquvh/6xjFizMiimOwgPjzV7L68PAAgBqSy8AAAY/NHJEwAAAMHh5AAAAAAA3mghPIiv7AcyiqrQydcbux7+Eev4z+N+oOGN3mzeI8NdCjBqAAAAAKO0nBI1copRoR5QGippzsvGx1T9DotaTJIHQfc3Vj6zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let filter = EventTypeFilter::include_only(vec![EventType::PumpFunMigrate]);
+        let event = parse_log_optimized_with_program_id(
+            log,
+            Signature::default(),
+            426651252,
+            0,
+            None,
+            0,
+            Some(&filter),
+            false,
+            None,
+            Some(&program_ids::PUMPFUN_PROGRAM_ID),
+        )
+        .expect("PumpFun MigrateEvent log should parse under PumpFunMigrate filter");
+
+        match event {
+            DexEvent::PumpFunMigrate(migrate) => {
+                assert_eq!(
+                    migrate.mint.to_string(),
+                    "6D8XQvpWcPiMeXdvjYbquy5ei331gWnM5fQjpqkopump"
+                );
+                assert_eq!(
+                    migrate.bonding_curve.to_string(),
+                    "FyBbuddurWTC314jMuBkquv1RBeViHko2Pu1Ne7FZTMt"
+                );
+                assert_eq!(
+                    migrate.pool.to_string(),
+                    "C23BqVKDN68Bx6TnuKBMVsKQgcso1QNHcXyviQFBm5WJ"
+                );
+            }
+            other => panic!("expected PumpFunMigrate, got {other:?}"),
         }
     }
 
