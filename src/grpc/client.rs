@@ -17,9 +17,10 @@ use crate::DexEvent;
 use crossbeam_queue::ArrayQueue;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
+use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, Instant};
 // Note: ClientTlsConfig moved to yellowstone_grpc_client in newer versions
@@ -41,6 +42,206 @@ fn push_queue(queue: &ArrayQueue<DexEvent>, event: DexEvent) -> bool {
         false
     } else {
         true
+    }
+}
+
+struct DexEventQueueInner {
+    queue: Arc<ArrayQueue<DexEvent>>,
+    notify: Notify,
+    closed: AtomicBool,
+}
+
+/// Bounded DEX event queue paired with a [`tokio::sync::Notify`] wakeup signal
+/// so consumers can await [`DexEventQueue::recv`] without busy-spinning.
+#[derive(Clone)]
+pub struct DexEventQueue {
+    inner: Arc<DexEventQueueInner>,
+}
+
+impl fmt::Debug for DexEventQueue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DexEventQueue")
+            .field("len", &self.inner.queue.len())
+            .field("capacity", &self.inner.queue.capacity())
+            .field("closed", &self.inner.closed.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+impl DexEventQueue {
+    fn new(capacity: usize) -> (Self, NotifyQueueSink) {
+        let inner = Arc::new(DexEventQueueInner {
+            queue: Arc::new(ArrayQueue::new(capacity.max(1))),
+            notify: Notify::new(),
+            closed: AtomicBool::new(false),
+        });
+        (Self { inner: Arc::clone(&inner) }, NotifyQueueSink(inner))
+    }
+
+    /// Waits for the next buffered event without busy-spinning.
+    ///
+    /// Returns `None` once the subscription task ends and all buffered events
+    /// have been drained.
+    pub async fn recv(&self) -> Option<DexEvent> {
+        if let Some(event) = self.inner.queue.pop() {
+            return Some(event);
+        }
+        loop {
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            // Register the waiter before popping so no push or close wakeup
+            // can slip between checking the queue and awaiting.
+            notified.as_mut().enable();
+            if let Some(event) = self.inner.queue.pop() {
+                return Some(event);
+            }
+            if self.inner.closed.load(Ordering::Acquire) {
+                return self.inner.queue.pop();
+            }
+            notified.await;
+        }
+    }
+
+    /// Non-blocking pop of the next buffered event, if any.
+    #[inline]
+    pub fn pop(&self) -> Option<DexEvent> {
+        self.inner.queue.pop()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.queue.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.inner.queue.is_empty()
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.inner.queue.capacity()
+    }
+
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::Acquire)
+    }
+
+    /// Underlying lock-free ring buffer.
+    #[inline]
+    pub fn queue(&self) -> &Arc<ArrayQueue<DexEvent>> {
+        &self.inner.queue
+    }
+}
+
+struct SubscriptionCloseSignal {
+    closed: AtomicBool,
+    notify: Notify,
+}
+
+impl SubscriptionCloseSignal {
+    fn new() -> Self {
+        Self { closed: AtomicBool::new(false), notify: Notify::new() }
+    }
+
+    fn mark_closed(&self) {
+        self.closed.store(true, Ordering::Release);
+        std::sync::atomic::fence(Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_closed(&self) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.closed.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Lifecycle handle for a callback-driven gRPC subscription created by
+/// [`YellowstoneGrpc::subscribe_dex_events_with_callback`].
+#[derive(Clone)]
+pub struct GrpcSubscriptionHandle {
+    signal: Arc<SubscriptionCloseSignal>,
+}
+
+impl fmt::Debug for GrpcSubscriptionHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GrpcSubscriptionHandle").field("closed", &self.is_closed()).finish()
+    }
+}
+
+impl GrpcSubscriptionHandle {
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        self.signal.closed.load(Ordering::Acquire)
+    }
+
+    /// Resolves once the underlying subscription task stops or is replaced.
+    pub async fn closed(&self) {
+        self.signal.wait_closed().await;
+    }
+}
+
+trait EventSink {
+    fn emit(&mut self, health: &SubscriptionHealth, event: DexEvent);
+}
+
+impl EventSink for Arc<ArrayQueue<DexEvent>> {
+    #[inline]
+    fn emit(&mut self, health: &SubscriptionHealth, event: DexEvent) {
+        if !push_queue(self, event) {
+            health.dropped();
+        }
+    }
+}
+
+struct NotifyQueueSink(Arc<DexEventQueueInner>);
+
+impl EventSink for NotifyQueueSink {
+    #[inline]
+    fn emit(&mut self, health: &SubscriptionHealth, event: DexEvent) {
+        if push_queue(&self.0.queue, event) {
+            std::sync::atomic::fence(Ordering::SeqCst);
+            self.0.notify.notify_one();
+        } else {
+            health.dropped();
+        }
+    }
+}
+
+impl Drop for NotifyQueueSink {
+    fn drop(&mut self) {
+        self.0.closed.store(true, Ordering::Release);
+        std::sync::atomic::fence(Ordering::SeqCst);
+        self.0.notify.notify_waiters();
+    }
+}
+
+struct CallbackSink<F> {
+    callback: F,
+    signal: Arc<SubscriptionCloseSignal>,
+}
+
+impl<F: FnMut(DexEvent)> EventSink for CallbackSink<F> {
+    #[inline]
+    fn emit(&mut self, _health: &SubscriptionHealth, event: DexEvent) {
+        (self.callback)(event);
+    }
+}
+
+impl<F> Drop for CallbackSink<F> {
+    fn drop(&mut self) {
+        self.signal.mark_closed();
     }
 }
 
@@ -144,10 +345,8 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn push_queue(&self, queue: &ArrayQueue<DexEvent>, event: DexEvent) {
-        if !push_queue(queue, event) {
-            self.health.dropped();
-        }
+    fn emit_event<S: EventSink>(&self, sink: &mut S, event: DexEvent) {
+        sink.emit(&self.health, event);
     }
 
     pub fn new(
@@ -201,6 +400,60 @@ impl YellowstoneGrpc {
         account_filters: Vec<AccountFilter>,
         event_type_filter: Option<EventTypeFilter>,
     ) -> Result<Arc<ArrayQueue<DexEvent>>, Box<dyn std::error::Error>> {
+        let queue = Arc::new(ArrayQueue::new(self.config.buffer_size.max(1)));
+        self.start_subscription(
+            transaction_filters,
+            account_filters,
+            event_type_filter,
+            Arc::clone(&queue),
+        )
+        .await;
+        Ok(queue)
+    }
+
+    /// Subscribe to DEX events backed by a bounded queue with async wakeup
+    /// notifications ([`DexEventQueue::recv`]), avoiding `yield_now()` spin-loops.
+    pub async fn subscribe_dex_events_stream(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+        event_type_filter: Option<EventTypeFilter>,
+    ) -> Result<DexEventQueue, Box<dyn std::error::Error>> {
+        let (queue, sink) = DexEventQueue::new(self.config.buffer_size.max(1));
+        self.start_subscription(transaction_filters, account_filters, event_type_filter, sink)
+            .await;
+        Ok(queue)
+    }
+
+    /// Subscribe to DEX events with a direct inline callback on the gRPC task
+    /// for lowest-latency hot paths without an intermediate queue hop.
+    pub async fn subscribe_dex_events_with_callback<F>(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+        event_type_filter: Option<EventTypeFilter>,
+        callback: F,
+    ) -> Result<GrpcSubscriptionHandle, Box<dyn std::error::Error>>
+    where
+        F: FnMut(DexEvent) + Send + 'static,
+    {
+        let signal = Arc::new(SubscriptionCloseSignal::new());
+        let handle = GrpcSubscriptionHandle { signal: Arc::clone(&signal) };
+        let sink = CallbackSink { callback, signal };
+        self.start_subscription(transaction_filters, account_filters, event_type_filter, sink)
+            .await;
+        Ok(handle)
+    }
+
+    async fn start_subscription<S>(
+        &self,
+        transaction_filters: Vec<TransactionFilter>,
+        account_filters: Vec<AccountFilter>,
+        event_type_filter: Option<EventTypeFilter>,
+        mut sink: S,
+    ) where
+        S: EventSink + Send + 'static,
+    {
         let _lifecycle = self.subscription_lifecycle.lock().await;
         self.stop_without_lifecycle_lock().await;
 
@@ -209,8 +462,6 @@ impl YellowstoneGrpc {
             accounts: account_filters,
             events: event_type_filter,
         });
-        let queue = Arc::new(ArrayQueue::new(self.config.buffer_size.max(1)));
-        let queue_clone = Arc::clone(&queue);
         let self_clone = self.clone();
         let stop_signal = Arc::new(AtomicBool::new(false));
         *self.stop_signal.lock().await = Some(Arc::clone(&stop_signal));
@@ -231,7 +482,7 @@ impl YellowstoneGrpc {
                         &filters.transactions,
                         &filters.accounts,
                         &filters.events,
-                        &queue_clone,
+                        &mut sink,
                     )
                     .await;
                 self_clone.health.disconnected();
@@ -260,7 +511,6 @@ impl YellowstoneGrpc {
         });
 
         *self.subscription_handle.lock().await = Some(handle);
-        Ok(queue)
     }
 
     /// 动态更新订阅过滤器
@@ -336,12 +586,12 @@ impl YellowstoneGrpc {
 
     // ==================== 核心事件流处理 ====================
 
-    async fn stream_events(
+    async fn stream_events<S: EventSink>(
         &self,
         tx_filters: &[TransactionFilter],
         acc_filters: &[AccountFilter],
         event_filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
     ) -> Result<(), String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -438,7 +688,7 @@ impl YellowstoneGrpc {
                                 continue;
                             }
                             self.handle_update(
-                                update, order_mode, event_filter, queue,
+                                update, order_mode, event_filter, sink,
                                 &mut slot_buffer, &mut micro_batch, &mut last_slot, batch_us
                             );
                         }
@@ -448,7 +698,7 @@ impl YellowstoneGrpc {
                                 order_mode,
                                 &mut slot_buffer,
                                 &mut micro_batch,
-                                queue,
+                                sink,
                             );
                             self.control_tx.lock().await.take();
                             return Err(e.to_string());
@@ -458,7 +708,7 @@ impl YellowstoneGrpc {
                                 order_mode,
                                 &mut slot_buffer,
                                 &mut micro_batch,
-                                queue,
+                                sink,
                             );
                             self.control_tx.lock().await.take();
                             return Ok(());
@@ -477,7 +727,7 @@ impl YellowstoneGrpc {
                         order_mode,
                         &mut slot_buffer,
                         &mut micro_batch,
-                        queue,
+                        sink,
                         timeout_ms,
                         batch_us,
                         &mut next_check,
@@ -511,12 +761,12 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn check_timeout(
+    fn check_timeout<S: EventSink>(
         &self,
         mode: OrderMode,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
         timeout_ms: u64,
         batch_us: u64,
         next_check: &mut Instant,
@@ -531,14 +781,14 @@ impl YellowstoneGrpc {
             OrderMode::Ordered => {
                 if slot_buf.should_timeout(timeout_ms) {
                     for e in slot_buf.flush_all() {
-                        self.push_queue(queue, e);
+                        self.emit_event(sink, e);
                     }
                 }
             }
             OrderMode::StreamingOrdered => {
                 if slot_buf.should_timeout(timeout_ms) {
                     for e in slot_buf.flush_streaming_timeout() {
-                        self.push_queue(queue, e);
+                        self.emit_event(sink, e);
                     }
                 }
             }
@@ -547,7 +797,7 @@ impl YellowstoneGrpc {
                 let now_us = get_timestamp_us();
                 if micro_buf.should_flush(now_us, batch_us) {
                     for e in micro_buf.flush() {
-                        self.push_queue(queue, e);
+                        self.emit_event(sink, e);
                     }
                 }
             }
@@ -555,12 +805,12 @@ impl YellowstoneGrpc {
         }
     }
 
-    fn flush_on_disconnect(
+    fn flush_on_disconnect<S: EventSink>(
         &self,
         mode: OrderMode,
         buffer: &mut SlotBuffer,
         micro_batch: &mut MicroBatchBuffer,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
     ) {
         let events = match mode {
             OrderMode::Ordered => buffer.flush_all(),
@@ -569,17 +819,17 @@ impl YellowstoneGrpc {
             OrderMode::Unordered => Vec::new(),
         };
         for event in events {
-            self.push_queue(queue, event);
+            self.emit_event(sink, event);
         }
     }
 
     #[inline]
-    fn handle_update(
+    fn handle_update<S: EventSink>(
         &self,
         update_msg: SubscribeUpdate,
         mode: OrderMode,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
         last_slot: &mut u64,
@@ -597,7 +847,7 @@ impl YellowstoneGrpc {
                     tx,
                     mode,
                     filter,
-                    queue,
+                    sink,
                     slot_buf,
                     micro_buf,
                     last_slot,
@@ -607,22 +857,22 @@ impl YellowstoneGrpc {
                 );
             }
             subscribe_update::UpdateOneof::Account(acc) => {
-                self.handle_account(acc, filter, queue, grpc_recv_us, block_time_us);
+                self.handle_account(acc, filter, sink, grpc_recv_us, block_time_us);
             }
             subscribe_update::UpdateOneof::BlockMeta(block_meta) => {
-                self.handle_block_meta(block_meta, filter, queue, grpc_recv_us, block_time_us);
+                self.handle_block_meta(block_meta, filter, sink, grpc_recv_us, block_time_us);
             }
             _ => {}
         }
     }
 
     #[inline]
-    fn handle_transaction(
+    fn handle_transaction<S: EventSink>(
         &self,
         tx: SubscribeUpdateTransaction,
         mode: OrderMode,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
         slot_buf: &mut SlotBuffer,
         micro_buf: &mut MicroBatchBuffer,
         last_slot: &mut u64,
@@ -659,13 +909,13 @@ impl YellowstoneGrpc {
                     Some(block_us),
                     filter.as_ref(),
                 ) {
-                    self.push_queue(queue, e);
+                    self.emit_event(sink, e);
                 }
             }
             OrderMode::Ordered => {
                 if slot > *last_slot && *last_slot > 0 {
                     for e in slot_buf.flush_before(slot) {
-                        self.push_queue(queue, e);
+                        self.emit_event(sink, e);
                     }
                 }
                 *last_slot = (*last_slot).max(slot);
@@ -684,7 +934,7 @@ impl YellowstoneGrpc {
                     filter.as_ref(),
                 );
                 for event in slot_buf.push_streaming_batch(slot, idx, events) {
-                    self.push_queue(queue, event);
+                    self.emit_event(sink, event);
                 }
             }
             OrderMode::MicroBatch => {
@@ -693,7 +943,7 @@ impl YellowstoneGrpc {
                 {
                     if micro_buf.push(slot, idx, e, grpc_us, batch_us) {
                         for evt in micro_buf.flush() {
-                            self.push_queue(queue, evt);
+                            self.emit_event(sink, evt);
                         }
                     }
                 }
@@ -702,11 +952,11 @@ impl YellowstoneGrpc {
     }
 
     #[inline]
-    fn handle_account(
+    fn handle_account<S: EventSink>(
         &self,
         acc: SubscribeUpdateAccount,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
         grpc_us: i64,
         block_us: i64,
     ) {
@@ -746,8 +996,8 @@ impl YellowstoneGrpc {
                 .as_ref()
                 .is_some_and(|types| types.contains(&crate::grpc::EventType::AccountRawSnapshot))
         }) {
-            self.push_queue(
-                queue,
+            self.emit_event(
+                sink,
                 DexEvent::RawAccountSnapshot(Box::new(
                     crate::accounts::liquidity_snapshot::RawAccountSnapshotEvent {
                         metadata: meta,
@@ -759,16 +1009,16 @@ impl YellowstoneGrpc {
             );
         }
         if let Some(e) = normalized {
-            self.push_queue(queue, e);
+            self.emit_event(sink, e);
         }
     }
 
     #[inline]
-    fn handle_block_meta(
+    fn handle_block_meta<S: EventSink>(
         &self,
         block_meta: SubscribeUpdateBlockMeta,
         filter: &Option<EventTypeFilter>,
-        queue: &Arc<ArrayQueue<DexEvent>>,
+        sink: &mut S,
         grpc_us: i64,
         fallback_block_us: i64,
     ) {
@@ -789,7 +1039,7 @@ impl YellowstoneGrpc {
             },
         });
         if filter.as_ref().map(|f| f.should_include_dex_event(&event)).unwrap_or(true) {
-            self.push_queue(queue, event);
+            self.emit_event(sink, event);
         }
     }
 }
@@ -836,7 +1086,7 @@ mod tests {
             .copy_from_slice(crate::accounts::raydium_cpmm::discriminators::CREATOR_FEE_SHARE);
         bytes[73..81].copy_from_slice(&300_000u64.to_le_bytes());
         for raw in [false, true] {
-            let queue = Arc::new(ArrayQueue::new(4));
+            let mut queue = Arc::new(ArrayQueue::new(4));
             let mut types = vec![EventType::AccountRaydiumCpmmCreatorFeeShare];
             if raw {
                 types.push(EventType::AccountRawSnapshot);
@@ -854,7 +1104,7 @@ mod tests {
                 slot: 100,
                 ..Default::default()
             };
-            grpc.handle_account(update.clone(), &filter, &queue, 1, 2);
+            grpc.handle_account(update.clone(), &filter, &mut queue, 1, 2);
             if raw {
                 assert!(matches!(queue.pop(), Some(DexEvent::RawAccountSnapshot(_))));
             }
@@ -863,7 +1113,7 @@ mod tests {
             let info = update.account.as_mut().unwrap();
             info.lamports = 0;
             info.write_version = 2;
-            grpc.handle_account(update, &filter, &queue, 3, 4);
+            grpc.handle_account(update, &filter, &mut queue, 3, 4);
             if raw {
                 let DexEvent::RawAccountSnapshot(closed) = queue.pop().unwrap() else {
                     panic!("tombstone")
@@ -902,7 +1152,7 @@ mod tests {
             if both {
                 types.push(EventType::AccountRaydiumCpmmAmmConfig);
             }
-            let queue = Arc::new(ArrayQueue::new(4));
+            let mut queue = Arc::new(ArrayQueue::new(4));
             grpc.handle_account(
                 SubscribeUpdateAccount {
                     account: Some(SubscribeUpdateAccountInfo {
@@ -917,7 +1167,7 @@ mod tests {
                     ..Default::default()
                 },
                 &Some(EventTypeFilter::include_only(types)),
-                &queue,
+                &mut queue,
                 1,
                 2,
             );
@@ -932,7 +1182,7 @@ mod tests {
     #[test]
     fn malformed_account_identities_invalidate_continuity_without_default_key_events() {
         let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
-        let queue = Arc::new(ArrayQueue::new(4));
+        let mut queue = Arc::new(ArrayQueue::new(4));
         for (key_len, owner_len) in [(31, 32), (32, 33), (0, 32)] {
             grpc.handle_account(
                 SubscribeUpdateAccount {
@@ -944,7 +1194,7 @@ mod tests {
                     ..Default::default()
                 },
                 &Some(EventTypeFilter::include_only(vec![EventType::AccountRawSnapshot])),
-                &queue,
+                &mut queue,
                 1,
                 2,
             );
@@ -968,13 +1218,13 @@ mod tests {
             slot: 123,
             is_startup: true,
         };
-        let queue = Arc::new(ArrayQueue::new(4));
+        let mut queue = Arc::new(ArrayQueue::new(4));
         let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
-        grpc.handle_account(account.clone(), &None, &queue, 1, 2);
+        grpc.handle_account(account.clone(), &None, &mut queue, 1, 2);
         assert!(queue.pop().is_none());
         let filter =
             Some(EventTypeFilter::include_only(vec![crate::grpc::EventType::AccountRawSnapshot]));
-        grpc.handle_account(account, &filter, &queue, 1, 2);
+        grpc.handle_account(account, &filter, &mut queue, 1, 2);
         let DexEvent::RawAccountSnapshot(event) = queue.pop().unwrap() else {
             panic!("raw snapshot")
         };
@@ -1063,12 +1313,17 @@ mod tests {
     #[test]
     fn micro_batch_is_flushed_on_disconnect() {
         let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_string(), None).unwrap();
-        let queue = Arc::new(ArrayQueue::new(2));
+        let mut queue = Arc::new(ArrayQueue::new(2));
         let mut slot_buffer = SlotBuffer::new();
         let mut micro_batch = MicroBatchBuffer::new();
         assert!(!micro_batch.push(7, 0, test_event(7), 10, 100));
 
-        grpc.flush_on_disconnect(OrderMode::MicroBatch, &mut slot_buffer, &mut micro_batch, &queue);
+        grpc.flush_on_disconnect(
+            OrderMode::MicroBatch,
+            &mut slot_buffer,
+            &mut micro_batch,
+            &mut queue,
+        );
 
         assert!(micro_batch.is_empty());
         assert!(matches!(queue.pop(), Some(DexEvent::BlockMeta(_))));
@@ -1080,7 +1335,7 @@ mod tests {
         push_queue(&queue, test_event(1));
         let before = GRPC_DROPPED_EVENTS.load(Ordering::Relaxed);
         push_queue(&queue, test_event(2));
-        assert!(GRPC_DROPPED_EVENTS.load(Ordering::Relaxed) >= before + 1);
+        assert!(GRPC_DROPPED_EVENTS.load(Ordering::Relaxed) > before);
     }
     #[test]
     fn continuity_status_is_shared_by_clones_and_loss_is_client_local() {
@@ -1089,10 +1344,10 @@ mod tests {
         let other = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
         grpc.health.connected();
         let initial = grpc.subscription_status();
-        let queue = ArrayQueue::new(1);
-        grpc.push_queue(&queue, test_event(1));
+        let mut queue = Arc::new(ArrayQueue::new(1));
+        grpc.emit_event(&mut queue, test_event(1));
         assert_eq!(clone.subscription_status(), initial);
-        grpc.push_queue(&queue, test_event(2));
+        grpc.emit_event(&mut queue, test_event(2));
         let loss = clone.subscription_status();
         assert_eq!(loss.dropped_events, 1);
         assert!(loss.continuity_revision > initial.continuity_revision);
@@ -1113,7 +1368,7 @@ mod tests {
     #[test]
     fn raw_account_overflow_marks_subscription_state_incomplete() {
         let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
-        let queue = Arc::new(ArrayQueue::new(1));
+        let mut queue = Arc::new(ArrayQueue::new(1));
         queue.push(test_event(1)).unwrap();
         let account = SubscribeUpdateAccount {
             account: Some(SubscribeUpdateAccountInfo {
@@ -1126,7 +1381,7 @@ mod tests {
         grpc.handle_account(
             account,
             &Some(EventTypeFilter::include_only(vec![EventType::AccountRawSnapshot])),
-            &queue,
+            &mut queue,
             0,
             0,
         );
@@ -1158,5 +1413,74 @@ mod tests {
         );
         tokio::time::timeout(Duration::from_secs(1), grpc.stop()).await.unwrap();
         assert!(grpc.subscription_filters.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dex_event_queue_recv_wakes_on_push_and_drains_before_none_on_close() {
+        let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
+        let (queue, mut sink) = DexEventQueue::new(2);
+
+        let reader_queue = queue.clone();
+        let reader = tokio::spawn(async move {
+            let mut slots = Vec::new();
+            while let Some(DexEvent::BlockMeta(meta)) = reader_queue.recv().await {
+                slots.push(meta.metadata.slot);
+            }
+            slots
+        });
+
+        // Push while reader is parked on Notify.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        grpc.emit_event(&mut sink, test_event(10));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        grpc.emit_event(&mut sink, test_event(11));
+        grpc.emit_event(&mut sink, test_event(12));
+        drop(sink);
+
+        let slots = tokio::time::timeout(Duration::from_secs(2), reader).await.unwrap().unwrap();
+        assert_eq!(slots, vec![10, 11, 12]);
+        assert!(queue.is_closed());
+        assert!(queue.recv().await.is_none());
+    }
+
+    #[test]
+    fn dex_event_queue_overflow_marks_subscription_health_dropped() {
+        let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
+        let (queue, mut sink) = DexEventQueue::new(1);
+        grpc.emit_event(&mut sink, test_event(1));
+        grpc.emit_event(&mut sink, test_event(2));
+        assert_eq!(grpc.subscription_status().dropped_events, 1);
+        assert_eq!(queue.len(), 1);
+        assert!(matches!(queue.pop(), Some(DexEvent::BlockMeta(e)) if e.metadata.slot == 1));
+    }
+
+    #[tokio::test]
+    async fn callback_sink_invokes_inline_and_signals_close_on_drop() {
+        let grpc = YellowstoneGrpc::new("http://127.0.0.1:1".to_owned(), None).unwrap();
+        let signal = Arc::new(SubscriptionCloseSignal::new());
+        let handle = GrpcSubscriptionHandle { signal: Arc::clone(&signal) };
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_cb = Arc::clone(&seen);
+        let mut sink = CallbackSink {
+            callback: move |event: DexEvent| {
+                if let DexEvent::BlockMeta(meta) = event {
+                    seen_cb.lock().unwrap().push(meta.metadata.slot);
+                }
+            },
+            signal,
+        };
+
+        assert!(!handle.is_closed());
+        grpc.emit_event(&mut sink, test_event(42));
+        grpc.emit_event(&mut sink, test_event(43));
+        assert_eq!(*seen.lock().unwrap(), vec![42, 43]);
+
+        let waiter = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.closed().await }
+        });
+        drop(sink);
+        tokio::time::timeout(Duration::from_secs(2), waiter).await.unwrap().unwrap();
+        assert!(handle.is_closed());
     }
 }

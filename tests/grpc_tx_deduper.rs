@@ -38,3 +38,20 @@ fn yellowstone_client_accepts_shared_tx_deduper() {
 fn yellowstone_grpc_client_alias_remains_available() {
     let _client_type_check: Option<YellowstoneGrpcClient> = None;
 }
+
+#[tokio::test]
+async fn tx_deduper_rotates_generations_inside_tokio_runtime_without_losing_active_entries() {
+    let deduper = TxDeduper::new(Duration::from_secs(5), None);
+    let sig_a = Signature::new_unique();
+    let sig_b = Signature::new_unique();
+    let sig_c = Signature::new_unique();
+
+    assert!(deduper.check(sig_a, 10, 1_000_000));
+    assert!(deduper.check(sig_b, 10, 5_500_000));
+    // Trigger generation rotation at t = 6s: sig_a expired, sig_b still within TTL in previous gen.
+    assert!(deduper.check(sig_c, 10, 6_000_000));
+    assert!(deduper.check(sig_a, 10, 6_000_001));
+    assert!(!deduper.check(sig_b, 10, 9_999_999));
+    // Trigger second rotation at t = 11s: old generation dropped off hot path; sig_b now expired.
+    assert!(deduper.check(sig_b, 10, 11_000_000));
+}
