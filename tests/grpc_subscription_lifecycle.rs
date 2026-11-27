@@ -217,3 +217,135 @@ async fn dynamic_filters_and_block_progress_survive_real_grpc_reconnect() {
     let _ = shutdown.send(());
     tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
 }
+
+async fn spawn_test_geyser() -> (
+    std::net::SocketAddr,
+    mpsc::UnboundedReceiver<(usize, SubscribeRequest)>,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (requests, received) = mpsc::unbounded_channel();
+    let (shutdown, stopped) = oneshot::channel();
+    let service = TestGeyser { connections: Arc::new(AtomicUsize::new(0)), requests };
+    let incoming = futures::stream::unfold(listener, |listener| async {
+        let result = listener.accept().await.map(|(socket, _)| socket);
+        Some((result, listener))
+    });
+    let server = tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(GeyserServer::new(service))
+            .serve_with_incoming_shutdown(incoming, async {
+                let _ = stopped.await;
+            }),
+    );
+    (address, received, shutdown, server)
+}
+
+#[tokio::test]
+async fn stream_subscription_delivers_via_recv_across_reconnect_and_closes_on_stop() {
+    let (address, mut received, shutdown, server) = spawn_test_geyser().await;
+    let grpc = YellowstoneGrpc::new_with_config(
+        format!("http://{address}"),
+        None,
+        ClientConfig {
+            enable_tls: false,
+            connection_timeout_ms: 1000,
+            retry_delay_ms: 10,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let stream = grpc
+        .subscribe_dex_events_stream(
+            vec![],
+            vec![AccountFilter::new().add_account("old-account")],
+            Some(EventTypeFilter::include_only(vec![EventType::BlockMeta])),
+        )
+        .await
+        .unwrap();
+
+    let (first, _) =
+        tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    assert_eq!(first, 0);
+    let event = tokio::time::timeout(Duration::from_secs(5), stream.recv()).await.unwrap();
+    assert!(matches!(event, Some(DexEvent::BlockMeta(e)) if e.metadata.slot == 100));
+
+    grpc.update_subscription(vec![], vec![AccountFilter::new().add_account("new-account")])
+        .await
+        .unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    let (next, reconnected) =
+        tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    assert_eq!(next, 1);
+    assert_eq!(reconnected.accounts["acc_0"].account, vec!["new-account"]);
+
+    let event = tokio::time::timeout(Duration::from_secs(5), stream.recv()).await.unwrap();
+    assert!(matches!(event, Some(DexEvent::BlockMeta(e)) if e.metadata.slot == 101));
+
+    grpc.stop().await;
+    assert!(tokio::time::timeout(Duration::from_secs(5), stream.recv()).await.unwrap().is_none());
+    assert!(stream.is_closed());
+
+    let _ = shutdown.send(());
+    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn callback_subscription_delivers_inline_across_reconnect_and_closes_on_stop() {
+    let (address, mut received, shutdown, server) = spawn_test_geyser().await;
+    let grpc = YellowstoneGrpc::new_with_config(
+        format!("http://{address}"),
+        None,
+        ClientConfig {
+            enable_tls: false,
+            connection_timeout_ms: 1000,
+            retry_delay_ms: 10,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (slot_tx, mut slot_rx) = mpsc::unbounded_channel();
+    let handle = grpc
+        .subscribe_dex_events_with_callback(
+            vec![],
+            vec![AccountFilter::new().add_account("old-account")],
+            Some(EventTypeFilter::include_only(vec![EventType::BlockMeta])),
+            move |event| {
+                if let DexEvent::BlockMeta(e) = event {
+                    let _ = slot_tx.send(e.metadata.slot);
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+    let (first, _) =
+        tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    assert_eq!(first, 0);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), slot_rx.recv()).await.unwrap(),
+        Some(100)
+    );
+
+    grpc.update_subscription(vec![], vec![AccountFilter::new().add_account("new-account")])
+        .await
+        .unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    let (next, _) =
+        tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    assert_eq!(next, 1);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), slot_rx.recv()).await.unwrap(),
+        Some(101)
+    );
+
+    assert!(!handle.is_closed());
+    grpc.stop().await;
+    tokio::time::timeout(Duration::from_secs(5), handle.closed()).await.unwrap();
+    assert!(handle.is_closed());
+
+    let _ = shutdown.send(());
+    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
+}
