@@ -229,6 +229,7 @@ fn parse_trade_instruction(
     let metadata = create_metadata_simple(signature, slot, tx_index, block_time_us, pool_state);
 
     Some(DexEvent::RaydiumLaunchlabTrade(RaydiumLaunchlabTradeEvent {
+        third_program: None,
         metadata,
         pool_state,
         user: get_account(accounts, 0).unwrap_or_default(),

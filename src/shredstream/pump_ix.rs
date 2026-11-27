@@ -67,6 +67,11 @@ fn build_shred_ix_accounts(static_keys: &[Pubkey], ix_accounts: &[u8]) -> ShredI
 }
 
 #[inline(always)]
+fn instruction_keys_resolved(program_id_index: u8, accounts: &[u8], keys_len: usize) -> bool {
+    (program_id_index as usize) < keys_len && accounts.iter().all(|&i| (i as usize) < keys_len)
+}
+
+#[inline(always)]
 fn disc8(data: &[u8]) -> Option<[u8; 8]> {
     data.get(..8)?.try_into().ok()
 }
@@ -83,6 +88,9 @@ fn pumpfun_outer_data_may_parse(data: &[u8]) -> bool {
             | discriminators::BUY
             | discriminators::SELL
             | discriminators::BUY_EXACT_SOL_IN
+            | discriminators::BUY_V3
+            | discriminators::SELL_V3
+            | discriminators::BUY_EXACT_QUOTE_IN_V3
             | discriminators::BUY_V2
             | discriminators::BUY_EXACT_QUOTE_IN_V2
             | discriminators::SELL_V2
@@ -222,10 +230,15 @@ fn scan_create_mint_from_unknown_program_ix(
 fn detect_pumpfun_create_mints(
     message: &VersionedMessage,
     static_keys: &[Pubkey],
+    best_effort: bool,
 ) -> (PumpMintSet, PumpMintSet) {
     let mut created_mints = PumpMintSet::new();
     let mut mayhem_mints = PumpMintSet::new();
     for ix in message.instructions() {
+        if !best_effort && program_id_references_loaded_key(ix.program_id_index, static_keys.len())
+        {
+            continue;
+        }
         scan_create_mint_from_ix(
             ix.program_id_index,
             &ix.accounts,
@@ -253,11 +266,15 @@ fn dispatch_shred_outer(
     created_mints: &PumpMintSet,
     mayhem_mints: &PumpMintSet,
     events: &mut Vec<DexEvent>,
+    best_effort: bool,
 ) {
     if data.is_empty() {
         return;
     }
     if program_id_references_loaded_key(program_id_index, static_keys.len()) {
+        if !best_effort {
+            return;
+        }
         log::trace!(
             target: "sol_parser_sdk::shredstream",
             "program_id_index references an ALT-loaded account; trying discriminator-only best-effort parse"
@@ -285,7 +302,7 @@ fn dispatch_shred_outer(
             return;
         }
         let accounts = build_shred_ix_accounts(static_keys, ix_accounts);
-        if let Some(ev) = parse_pumpfun_instruction(
+        if let Some(mut ev) = parse_pumpfun_instruction(
             data,
             &accounts,
             signature,
@@ -295,6 +312,9 @@ fn dispatch_shred_outer(
             created_mints,
             mayhem_mints,
         ) {
+            if !best_effort {
+                preserve_unresolved_pumpfun_accounts(&mut ev, data, ix_accounts, static_keys.len());
+            }
             push_filtered_shred_event(events, ev, filter);
         }
         return;
@@ -310,6 +330,10 @@ fn dispatch_shred_outer(
     {
         return;
     }
+    if !best_effort && !instruction_keys_resolved(program_id_index, ix_accounts, static_keys.len())
+    {
+        return;
+    }
     let accounts = build_shred_ix_accounts(static_keys, ix_accounts);
     if let Some(ev) = parse_non_pump_dex_outer(
         *program_id,
@@ -322,6 +346,53 @@ fn dispatch_shred_outer(
         filter,
     ) {
         push_filtered_shred_event(events, ev, filter);
+    }
+}
+
+/// Missing ALT keys must stay unknown, even where legacy decoders supply a
+/// SOL quote sentinel or assume Token-2022. Instruction arguments remain usable.
+#[inline]
+fn preserve_unresolved_pumpfun_accounts(
+    event: &mut DexEvent,
+    data: &[u8],
+    indices: &[u8],
+    keys_len: usize,
+) {
+    let trade = match event {
+        DexEvent::PumpFunTrade(t)
+        | DexEvent::PumpFunBuy(t)
+        | DexEvent::PumpFunSell(t)
+        | DexEvent::PumpFunBuyExactSolIn(t) => t,
+        _ => return,
+    };
+    let missing =
+        |position: usize| indices.get(position).is_some_and(|&index| index as usize >= keys_len);
+    match disc8(data) {
+        Some(
+            discriminators::BUY_V2
+            | discriminators::BUY_EXACT_QUOTE_IN_V2
+            | discriminators::SELL_V2
+            | discriminators::BUY_V3
+            | discriminators::BUY_EXACT_QUOTE_IN_V3
+            | discriminators::SELL_V3,
+        ) => {
+            if missing(2) {
+                trade.quote_mint = Pubkey::default();
+            }
+            if missing(3) {
+                trade.token_program = Pubkey::default();
+            }
+            if missing(4) {
+                trade.quote_token_program = Pubkey::default();
+            }
+        }
+        Some(discriminators::BUY | discriminators::BUY_EXACT_SOL_IN) if missing(8) => {
+            trade.token_program = Pubkey::default();
+        }
+        Some(discriminators::SELL) if missing(9) => {
+            trade.token_program = Pubkey::default();
+        }
+        _ => {}
     }
 }
 
@@ -478,6 +549,12 @@ pub fn parse_transaction_dex_events(
     );
 }
 
+/// Decode known Pump.fun outer instructions even when ALT accounts are not loaded.
+/// Missing addresses are left at their defaults; this does not infer unknown programs
+/// or executed amounts. Use the loaded-addresses entry point for complete accounts.
+/// A third-party wrapper is observable only when this instruction's Pump.fun program
+/// reference is resolved. If that key lives in ALT, supply cached loaded addresses;
+/// neither an opaque wrapper nor its discriminator establishes the invoked DEX.
 #[inline]
 pub fn parse_transaction_dex_events_with_filter(
     transaction: &VersionedTransaction,
@@ -488,19 +565,24 @@ pub fn parse_transaction_dex_events_with_filter(
     filter: Option<&EventTypeFilter>,
     events: &mut Vec<DexEvent>,
 ) {
-    parse_transaction_pump_events_with_filter(
+    parse_transaction_with_account_keys(
         transaction,
+        transaction.message.static_account_keys(),
         signature,
         slot,
         tx_index,
         recv_us,
         filter,
         events,
+        false,
     );
 }
 
+/// Compatibility parser that guesses unresolved program IDs by discriminator and
+/// substitutes missing account keys with defaults. Results are provisional and
+/// can be ambiguous; use the default parser or resolved ALT entry for parity.
 #[inline]
-fn parse_transaction_pump_events_with_filter(
+pub fn parse_transaction_dex_events_best_effort(
     transaction: &VersionedTransaction,
     signature: Signature,
     slot: u64,
@@ -509,13 +591,247 @@ fn parse_transaction_pump_events_with_filter(
     filter: Option<&EventTypeFilter>,
     events: &mut Vec<DexEvent>,
 ) {
-    let static_keys = transaction.message.static_account_keys();
+    parse_transaction_with_account_keys(
+        transaction,
+        transaction.message.static_account_keys(),
+        signature,
+        slot,
+        tx_index,
+        recv_us,
+        filter,
+        events,
+        true,
+    );
+}
+
+/// Parse outer instructions with addresses resolved from this transaction's ALT lookups.
+///
+/// Supply all writable addresses followed by all readonly addresses, in message lookup order.
+/// Resolve them using a caller-managed cache or RPC before calling this function. No network
+/// access occurs here. Wrong address counts or out-of-range instruction indices return an
+/// error without appending events. Address identity remains the resolver's responsibility.
+#[inline]
+pub fn parse_transaction_dex_events_with_loaded_addresses(
+    transaction: &VersionedTransaction,
+    loaded_writable: &[Pubkey],
+    loaded_readonly: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    recv_us: i64,
+    filter: Option<&EventTypeFilter>,
+    events: &mut Vec<DexEvent>,
+) -> anyhow::Result<()> {
+    let (writable_count, readonly_count) = transaction
+        .message
+        .address_table_lookups()
+        .unwrap_or_default()
+        .iter()
+        .fold((0usize, 0usize), |(w, r), lookup| {
+            (w + lookup.writable_indexes.len(), r + lookup.readonly_indexes.len())
+        });
+    anyhow::ensure!(
+        loaded_writable.len() == writable_count && loaded_readonly.len() == readonly_count,
+        "resolved ALT address counts do not match transaction lookups"
+    );
+    let mut keys: SmallVec<[Pubkey; 64]> = SmallVec::new();
+    keys.extend_from_slice(transaction.message.static_account_keys());
+    keys.extend_from_slice(loaded_writable);
+    keys.extend_from_slice(loaded_readonly);
+    anyhow::ensure!(
+        transaction
+            .message
+            .instructions()
+            .iter()
+            .all(|ix| (ix.program_id_index as usize) < keys.len()
+                && ix.accounts.iter().all(|&idx| (idx as usize) < keys.len())),
+        "instruction index exceeds resolved transaction account keys"
+    );
+    parse_transaction_with_account_keys(
+        transaction,
+        &keys,
+        signature,
+        slot,
+        tx_index,
+        recv_us,
+        filter,
+        events,
+        false,
+    );
+    Ok(())
+}
+
+#[inline]
+fn parse_transaction_with_account_keys(
+    transaction: &VersionedTransaction,
+    account_keys: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    recv_us: i64,
+    filter: Option<&EventTypeFilter>,
+    events: &mut Vec<DexEvent>,
+    best_effort: bool,
+) {
+    let start = events.len();
+    parse_transaction_pump_events_with_filter(
+        transaction,
+        account_keys,
+        signature,
+        slot,
+        tx_index,
+        recv_us,
+        filter,
+        events,
+        best_effort,
+    );
+    let appended = &mut events[start..];
+    crate::core::pumpfun_fee_enrich::enrich_pumpfun_same_tx_post_merge(appended);
+    let version = match &transaction.message {
+        VersionedMessage::Legacy(_) => crate::grpc::YellowstoneMessageVersion::Legacy,
+        VersionedMessage::V0(_) => crate::grpc::YellowstoneMessageVersion::V0,
+        VersionedMessage::V1(_) => crate::grpc::YellowstoneMessageVersion::V1,
+    };
+    let mut metadata = appended.iter_mut().filter_map(|event| {
+        let alt_addresses = match event {
+            DexEvent::PumpFunCreate(create) => {
+                create.transaction_version = Some(version);
+                Some(&mut create.alt_addresses)
+            }
+            DexEvent::PumpFunCreateV2(create) => {
+                create.transaction_version = Some(version);
+                Some(&mut create.alt_addresses)
+            }
+            _ => None,
+        };
+        if let Some(alt_addresses) = alt_addresses {
+            let lookups = transaction.message.address_table_lookups().unwrap_or_default();
+            *alt_addresses = (!lookups.is_empty())
+                .then(|| lookups.iter().map(|lookup| lookup.account_key).collect());
+        }
+        event.metadata_mut()
+    });
+    if let Some(first) = metadata.next() {
+        let blockhash = transaction.message.recent_blockhash().to_string();
+        for item in metadata {
+            item.grpc_recv_us = recv_us;
+            item.recent_blockhash = Some(blockhash.clone());
+        }
+        first.grpc_recv_us = recv_us;
+        first.recent_blockhash = Some(blockhash);
+    }
+}
+
+#[inline]
+fn parse_transaction_pump_events_with_filter(
+    transaction: &VersionedTransaction,
+    static_keys: &[Pubkey],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    recv_us: i64,
+    filter: Option<&EventTypeFilter>,
+    events: &mut Vec<DexEvent>,
+    best_effort: bool,
+) {
     let (created_mints, mayhem_mints) = if filter.is_none_or(|f| f.includes_pumpfun()) {
-        detect_pumpfun_create_mints(&transaction.message, static_keys)
+        detect_pumpfun_create_mints(&transaction.message, static_keys, best_effort)
     } else {
         (PumpMintSet::new(), PumpMintSet::new())
     };
-    for ix in transaction.message.instructions() {
+    let message_key_count = transaction.message.static_account_keys().len()
+        + transaction
+            .message
+            .address_table_lookups()
+            .unwrap_or_default()
+            .iter()
+            .map(|lookup| lookup.writable_indexes.len() + lookup.readonly_indexes.len())
+            .sum::<usize>();
+    for (instruction_index, ix) in transaction.message.instructions().iter().enumerate() {
+        if let Some(program) = static_keys.get(ix.program_id_index as usize) {
+            if *program == PUMPSWAP_PROGRAM_ID
+                && ix.data.starts_with(&super::pump_multi_hop::MULTI_HOP_SWAP)
+            {
+                if filter.is_none_or(EventTypeFilter::includes_unresolved_pumpfun) {
+                    super::pump_multi_hop::parse_curve_hops(
+                        &ix.data,
+                        &ix.accounts,
+                        static_keys,
+                        instruction_index,
+                        EventMetadata {
+                            signature,
+                            slot,
+                            tx_index,
+                            grpc_recv_us: recv_us,
+                            ..Default::default()
+                        },
+                        |mut trade| {
+                            trade.is_created_buy =
+                                trade.is_buy && created_mints.contains(&trade.mint);
+                            events.push(DexEvent::PumpFunTrade(trade));
+                        },
+                    );
+                }
+                continue;
+            }
+            if is_third_party_program(program) {
+                // Scan indices without allocating. Only subscribed Pump.fun
+                // candidates copy the original outer instruction into a callback.
+                if filter.is_none_or(EventTypeFilter::includes_unresolved_pumpfun)
+                    && ix
+                        .accounts
+                        .iter()
+                        .any(|index| static_keys.get(*index as usize) == Some(&PROGRAM_ID_PUBKEY))
+                {
+                    events.push(DexEvent::PumpFunTrade(crate::core::events::PumpFunTradeEvent {
+                        metadata: EventMetadata {
+                            signature,
+                            slot,
+                            tx_index,
+                            grpc_recv_us: recv_us,
+                            ..Default::default()
+                        },
+                        third_program: Some(crate::core::events::RawInstructionPayload {
+                            program_id: *program,
+                            instruction_index,
+                            accounts: ix
+                                .accounts
+                                .iter()
+                                .map(|index| static_keys.get(*index as usize).copied())
+                                .collect(),
+                            account_indices: ix.accounts.clone(),
+                            instruction_data: ix.data.clone(),
+                        }),
+                        ..Default::default()
+                    }));
+                }
+                // The wrapper's ABI and execution remain the caller's concern.
+                continue;
+            }
+        }
+        if !best_effort
+            && static_keys.get(ix.program_id_index as usize) == Some(&PROGRAM_ID_PUBKEY)
+            && ix.data.len() >= 8
+        {
+            // An unavailable ALT key is valid input; an index outside the
+            // message's declared static + lookup keys is malformed.
+            if !instruction_keys_resolved(ix.program_id_index, &ix.accounts, message_key_count) {
+                continue;
+            }
+            let disc = &ix.data[..8];
+            let minimum = if disc == discriminators::BUY_V2
+                || disc == discriminators::BUY_EXACT_QUOTE_IN_V2
+            {
+                27
+            } else if disc == discriminators::SELL_V2 {
+                26
+            } else {
+                0
+            };
+            if ix.accounts.len() < minimum {
+                continue;
+            }
+        }
         dispatch_shred_outer(
             ix.program_id_index,
             &ix.accounts,
@@ -529,11 +845,36 @@ fn parse_transaction_pump_events_with_filter(
             &created_mints,
             &mayhem_mints,
             events,
+            best_effort,
         );
     }
 }
 
 // --- 单条 outer ix 解析（由原 `client.rs` 迁入） ---
+
+fn is_third_party_program(program: &Pubkey) -> bool {
+    *program != PROGRAM_ID_PUBKEY
+        && !supported_unified_outer_programs().contains(program)
+        && !is_infrastructure_program(program)
+}
+
+fn is_infrastructure_program(program: &Pubkey) -> bool {
+    [
+        solana_sdk::pubkey!("11111111111111111111111111111111"),
+        solana_sdk::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        solana_sdk::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+        solana_sdk::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+        solana_sdk::pubkey!("ComputeBudget111111111111111111111111111111"),
+        solana_sdk::pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+        solana_sdk::pubkey!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo"),
+        solana_sdk::pubkey!("AddressLookupTab1e1111111111111111111111111"),
+        solana_sdk::pubkey!("Vote111111111111111111111111111111111111111"),
+        solana_sdk::pubkey!("Ed25519SigVerify111111111111111111111111111"),
+        solana_sdk::pubkey!("KeccakSecp256k11111111111111111111111111111"),
+        solana_sdk::pubkey!("Secp256r1SigVerify1111111111111111111111111"),
+    ]
+    .contains(program)
+}
 
 #[inline]
 fn parse_pumpfun_instruction(
@@ -552,6 +893,21 @@ fn parse_pumpfun_instruction(
     let disc: [u8; 8] = data[0..8].try_into().ok()?;
     let ix_data = &data[8..];
 
+    if [discriminators::BUY_V3, discriminators::SELL_V3, discriminators::BUY_EXACT_QUOTE_IN_V3]
+        .contains(&disc)
+    {
+        let mut ev = crate::instr::pump::parse_instruction(
+            data, accounts, signature, slot, tx_index, None, recv_us,
+        )?;
+        match &mut ev {
+            DexEvent::PumpFunBuy(t) | DexEvent::PumpFunSell(t) => {
+                t.is_created_buy = t.is_buy && created_mints.contains(&t.mint);
+                t.mayhem_mode = mayhem_mints.contains(&t.mint);
+            }
+            _ => {}
+        }
+        return Some(ev);
+    }
     match disc {
         d if d == discriminators::CREATE => {
             parse_create_instruction(data, accounts, signature, slot, tx_index, recv_us)
@@ -1537,6 +1893,21 @@ mod tests {
         events
     }
 
+    /// Explicit compatibility path for historical placeholder-key regressions.
+    fn parse_shred_events_best_effort(tx: &VersionedTransaction) -> Vec<DexEvent> {
+        let mut events = Vec::new();
+        parse_transaction_dex_events_best_effort(
+            tx,
+            Signature::default(),
+            123,
+            0,
+            456,
+            None,
+            &mut events,
+        );
+        events
+    }
+
     #[test]
     fn shred_pumpswap_upgrade_accounts_and_filters_match_all_trade_modes() {
         use crate::grpc::types::EventType;
@@ -1558,11 +1929,17 @@ mod tests {
             let mut keys = unique_accounts(count + 1);
             keys[count] = PUMPSWAP_PROGRAM_ID;
             let expected_pool = keys[0];
-            let expected_pool_v2 = pool_v2_index.map(|index| {
-                let pda = Pubkey::find_program_address(&[b"pool-v2", keys[3].as_ref()], &PUMPSWAP_PROGRAM_ID).0;
-                keys[index] = pda;
-                pda
-            }).unwrap_or_default();
+            let expected_pool_v2 = pool_v2_index
+                .map(|index| {
+                    let pda = Pubkey::find_program_address(
+                        &[b"pool-v2", keys[3].as_ref()],
+                        &PUMPSWAP_PROGRAM_ID,
+                    )
+                    .0;
+                    keys[index] = pda;
+                    pda
+                })
+                .unwrap_or_default();
             let expected_recipient = keys[count - 2];
             let expected_recipient_ata = keys[count - 1];
             let mut data = instruction_data(disc, 123, 456);
@@ -1718,7 +2095,7 @@ mod tests {
 
         let tx = v0_tx(9, static_keys, ix_accounts, create_data());
         let mut events = Vec::new();
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -1744,6 +2121,46 @@ mod tests {
     }
 
     #[test]
+    fn shred_creation_preserves_all_alt_keys_without_modifying_previous_events() {
+        let mut keys = unique_accounts(14);
+        keys.push(PROGRAM_ID_PUBKEY);
+        let base = v0_tx(14, keys, ix_accounts(14), create_data());
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        for alt_keys in [Vec::new(), vec![second, first, second]] {
+            let mut tx = base.clone();
+            let VersionedMessage::V0(message) = &mut tx.message else { unreachable!() };
+            message.address_table_lookups = alt_keys
+                .iter()
+                .map(|&account_key| v0::MessageAddressTableLookup {
+                    account_key,
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![],
+                })
+                .collect();
+            let mut events = vec![DexEvent::PumpFunCreate(PumpFunCreateTokenEvent {
+                alt_addresses: Some(vec![first]),
+                ..Default::default()
+            })];
+            parse_transaction_dex_events_with_filter(
+                &tx,
+                Signature::default(),
+                42,
+                0,
+                123,
+                None,
+                &mut events,
+            );
+            assert_eq!(events.len(), 2);
+            let DexEvent::PumpFunCreate(previous) = &events[0] else { panic!("previous create") };
+            assert_eq!(previous.alt_addresses, Some(vec![first]));
+            let DexEvent::PumpFunCreate(created) = &events[1] else { panic!("new create") };
+            let expected = (!alt_keys.is_empty()).then_some(alt_keys);
+            assert_eq!(created.alt_addresses, expected);
+        }
+    }
+
+    #[test]
     fn shred_pumpfun_create_uses_instruction_order_accounts() {
         let mut static_keys = vec![Pubkey::new_unique(); 12];
         static_keys[9] = PROGRAM_ID_PUBKEY;
@@ -1752,7 +2169,7 @@ mod tests {
         let user = static_keys[11];
         let token_program = static_keys[4];
         let mut ix_accounts = vec![5, 1, 3, 2, 6, 7, 8, 11, 10, 4];
-        ix_accounts[8] = 44;
+        ix_accounts[8] = 10;
 
         let tx = v0_tx(9, static_keys, ix_accounts, create_data());
         let mut events = Vec::new();
@@ -1781,14 +2198,14 @@ mod tests {
     }
 
     #[test]
-    fn shred_pumpfun_create_v2_ignores_unknown_remaining_accounts() {
+    fn best_effort_shred_pumpfun_create_v2_ignores_unknown_remaining_accounts() {
         let mut static_keys = vec![Pubkey::new_unique(); 20];
         static_keys[19] = PROGRAM_ID_PUBKEY;
         static_keys[16] = PUMPFUN_WSOL_QUOTE_MINT;
         let tx = v0_tx(19, static_keys, ix_accounts(19), create_v2_data());
         let mut events = Vec::new();
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -1814,7 +2231,7 @@ mod tests {
         let tx = v0_tx(19, static_keys, alt_ix_accounts, create_v2_data());
         events.clear();
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -1840,7 +2257,7 @@ mod tests {
         let signature =
             "H6azwLqtRtrnVNC5iwcjYM9idU3e9SRyLZXTwjfJGJxA4X7dZL7vyhFAJNvQy7bb6bmQNmFHUt1KkkPPmhdge3G";
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -2011,9 +2428,11 @@ mod tests {
                         case.signature
                     );
                     assert_eq!(
-                        event.quote_token_program, Pubkey::default(),
+                        event.quote_token_program,
+                        Pubkey::default(),
                         "{}: {}",
-                        case.name, case.signature
+                        case.name,
+                        case.signature
                     );
                     assert_eq!(
                         event.program, PROGRAM_ID_PUBKEY,
@@ -2027,7 +2446,7 @@ mod tests {
     }
 
     #[test]
-    fn shred_pumpfun_create_v2_alt_quote_index_is_not_guessable() {
+    fn best_effort_shred_pumpfun_create_v2_alt_quote_index_is_not_guessable() {
         // Real compiled-index pattern from the user-provided signatures:
         // - 4GCVgY2F... create_v2 has 19 accounts, but accounts[16] is global idx 27 (ALT).
         // - 5HwZKTwc... create_v2 has 19 accounts, but accounts[16] is global idx 28 (ALT).
@@ -2104,7 +2523,7 @@ mod tests {
             ix_accounts[16] = quote_global_idx;
             let tx = v0_tx(program_idx, static_keys, ix_accounts, create_v2_data());
 
-            let events = parse_shred_events_like_client(&tx);
+            let events = parse_shred_events_best_effort(&tx);
 
             assert_eq!(events.len(), 1, "{name}");
             match &events[0] {
@@ -2124,7 +2543,7 @@ mod tests {
     }
 
     #[test]
-    fn shred_pumpfun_create_v2_alt_quote_can_be_recovered_from_static_v2_trade() {
+    fn best_effort_shred_pumpfun_create_v2_alt_quote_can_be_recovered_from_static_v2_trade() {
         let usdc = pk("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
         let mint = Pubkey::new_unique();
         let mut static_keys = vec![Pubkey::new_unique(); 35];
@@ -2150,7 +2569,7 @@ mod tests {
             ],
         );
 
-        let events = parse_shred_events_like_client(&tx);
+        let events = parse_shred_events_best_effort(&tx);
 
         let create = events
             .iter()
@@ -2163,7 +2582,7 @@ mod tests {
     }
 
     #[test]
-    fn shred_pumpfun_create_v2_alt_quote_stays_unknown_when_trade_quote_is_alt_too() {
+    fn best_effort_shred_pumpfun_create_v2_alt_quote_stays_unknown_when_trade_quote_is_alt_too() {
         // Real compiled-index pattern from 3MVawF6... / 2dZAucK...:
         // create_v2 accounts[16] and follow-up buy_v2 accounts[2] both point to ALT-loaded USDC.
         let mint = Pubkey::new_unique();
@@ -2189,7 +2608,7 @@ mod tests {
             ],
         );
 
-        let events = parse_shred_events_like_client(&tx);
+        let events = parse_shred_events_best_effort(&tx);
 
         let create = events
             .iter()
@@ -2208,7 +2627,7 @@ mod tests {
         let tx = v0_tx(7, static_keys, ix_accounts(10), create_data());
         let mut events = Vec::new();
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -2226,7 +2645,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_program_without_filter_stops_after_first_matching_candidate() {
+    fn best_effort_unknown_program_without_filter_stops_after_first_matching_candidate() {
         let static_keys = vec![Pubkey::new_unique(); 18];
         let ix_accounts = ix_accounts(18);
         let mut data = Vec::new();
@@ -2236,7 +2655,7 @@ mod tests {
         let tx = v0_tx(30, static_keys, ix_accounts, data);
         let mut events = Vec::new();
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -2275,6 +2694,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2282,7 +2702,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_program_outer_uses_filter_to_parse_matching_protocol() {
+    fn best_effort_unknown_program_outer_uses_filter_to_parse_matching_protocol() {
         let static_keys = vec![RAYDIUM_CPMM_PROGRAM_ID, Pubkey::new_unique()];
         let ix_accounts = vec![1, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53];
         let mut data = Vec::new();
@@ -2294,7 +2714,7 @@ mod tests {
             EventTypeFilter::include_only(vec![crate::grpc::types::EventType::RaydiumCpmmSwap]);
         let mut events = Vec::new();
 
-        parse_transaction_dex_events_with_filter(
+        parse_transaction_dex_events_best_effort(
             &tx,
             Signature::default(),
             123,
@@ -2306,6 +2726,60 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], DexEvent::RaydiumCpmmSwap(_)));
+    }
+
+    #[test]
+    fn shred_v3_accepts_remaining_accounts_and_preserves_idl_inputs() {
+        use crate::grpc::types::EventType;
+        let mut keys: Vec<_> = (0..20).map(|_| Pubkey::new_unique()).collect();
+        keys[16] = PROGRAM_ID_PUBKEY;
+        for (disc, name) in [
+            (discriminators::BUY_V3, "buy_v3"),
+            (discriminators::BUY_EXACT_QUOTE_IN_V3, "buy_exact_quote_in_v3"),
+            (discriminators::SELL_V3, "sell_v3"),
+        ] {
+            for count in [17, 20] {
+                let mut data = disc.to_vec();
+                data.extend_from_slice(&123u64.to_le_bytes());
+                data.extend_from_slice(&456u64.to_le_bytes());
+                if disc != discriminators::SELL_V3 {
+                    data.push(1);
+                }
+                let filter = EventTypeFilter::include_only(vec![EventType::PumpFunTrade]);
+                let mut events = Vec::new();
+                dispatch_shred_outer(
+                    16,
+                    &ix_accounts(count),
+                    &data,
+                    &keys,
+                    Signature::default(),
+                    123,
+                    77,
+                    456,
+                    Some(&filter),
+                    &PumpMintSet::new(),
+                    &PumpMintSet::new(),
+                    &mut events,
+                    false,
+                );
+                assert_eq!(events.len(), 1, "{name}: accounts={count}");
+                let DexEvent::PumpFunTrade(t) = &events[0] else { panic!("trade") };
+                assert_eq!(t.ix_name, name);
+                assert_eq!((t.mint, t.user, t.bonding_curve), (keys[1], keys[8], keys[5]));
+                assert_eq!(t.user_volume_accumulator, keys[11]);
+                assert_eq!(t.fee_config, keys[12]);
+                assert_eq!(t.buyback_fee_recipient, keys[13]);
+                assert_eq!((t.metadata.tx_index, t.metadata.grpc_recv_us), (77, 456));
+                if disc == discriminators::BUY_EXACT_QUOTE_IN_V3 {
+                    assert_eq!((t.spendable_quote_in, t.min_tokens_out), (123, 456));
+                } else if disc == discriminators::BUY_V3 {
+                    assert_eq!((t.amount, t.max_sol_cost), (123, 456));
+                } else {
+                    assert_eq!((t.amount, t.min_sol_output), (123, 456));
+                }
+                assert!(t.third_program.is_none());
+            }
+        }
     }
 
     #[test]
@@ -2332,6 +2806,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2362,6 +2837,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2386,6 +2862,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2410,6 +2887,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2439,6 +2917,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert_eq!(events.len(), 1);
@@ -2465,6 +2944,7 @@ mod tests {
             &PumpMintSet::new(),
             &PumpMintSet::new(),
             &mut events,
+            true,
         );
 
         assert!(events.is_empty());

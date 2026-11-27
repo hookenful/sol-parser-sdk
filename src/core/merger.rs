@@ -36,9 +36,20 @@ pub fn merge_events(base: &mut DexEvent, inner: DexEvent) {
 #[inline(always)]
 pub fn try_merge_events(
     base: &mut DexEvent,
-    inner: DexEvent,
+    mut inner: DexEvent,
     unmerged: &mut Option<DexEvent>,
 ) -> bool {
+    if pump_trade_identity_conflicts(base, &inner) {
+        *unmerged = Some(inner);
+        return false;
+    }
+    if wrapper_sources_conflict(base, &inner) {
+        *unmerged = Some(inner);
+        return false;
+    }
+    if std::mem::discriminant(base) == std::mem::discriminant(&inner) {
+        reconcile_trade_source(base, &mut inner);
+    }
     use DexEvent::*;
 
     match (base, inner) {
@@ -169,6 +180,9 @@ pub fn try_merge_events(
         (MeteoraDammV2AddLiquidity(b), MeteoraDammV2AddLiquidity(i)) => merge_generic(b, i),
         (MeteoraDammV2RemoveLiquidity(b), MeteoraDammV2RemoveLiquidity(i)) => merge_generic(b, i),
         (MeteoraDammV2InitializePool(b), MeteoraDammV2InitializePool(i)) => merge_generic(b, i),
+        (MeteoraDammV2ClaimPositionFee(b), MeteoraDammV2ClaimPositionFee(i)) => merge_generic(b, i),
+        (MeteoraDammV2ClaimReward(b), MeteoraDammV2ClaimReward(i)) => merge_generic(b, i),
+        (MeteoraDlmmClaimReward(b), MeteoraDlmmClaimReward(i)) => merge_generic(b, i),
         (MeteoraDammV2CreatePosition(b), MeteoraDammV2CreatePosition(i)) => merge_generic(b, i),
         (MeteoraDammV2ClosePosition(b), MeteoraDammV2ClosePosition(i)) => merge_generic(b, i),
         (MeteoraDammV2UpdateDelegatePermission(b), MeteoraDammV2UpdateDelegatePermission(i)) => {
@@ -178,6 +192,17 @@ pub fn try_merge_events(
             MeteoraDammV2WithdrawDeadLiquidityReward(b),
             MeteoraDammV2WithdrawDeadLiquidityReward(i),
         ) => merge_generic(b, i),
+        (MeteoraDammV2WithdrawIneligibleReward(b), MeteoraDammV2WithdrawIneligibleReward(i)) => {
+            merge_generic(b, i)
+        }
+        (MeteoraDammV2UpdateRewardFunder(b), MeteoraDammV2UpdateRewardFunder(i)) => {
+            merge_generic(b, i)
+        }
+        (MeteoraDammV2UpdateRewardDuration(b), MeteoraDammV2UpdateRewardDuration(i)) => {
+            merge_generic(b, i)
+        }
+        (MeteoraDammV2InitializeReward(b), MeteoraDammV2InitializeReward(i)) => merge_generic(b, i),
+        (MeteoraDammV2FundReward(b), MeteoraDammV2FundReward(i)) => merge_generic(b, i),
         (MeteoraDammV2CreateConfig(b), MeteoraDammV2CreateConfig(i)) => merge_generic(b, i),
         (MeteoraDammV2CreateDynamicConfig(b), MeteoraDammV2CreateDynamicConfig(i)) => {
             merge_generic(b, i)
@@ -362,6 +387,9 @@ fn put_i64_if_nonzero(to: &mut i64, from: i64) {
 /// 则不再用其覆盖金额与储备，避免把前一段已合并好的数据清空。
 #[inline(always)]
 fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
+    if base.third_program.is_none() {
+        base.third_program = inner.third_program.clone();
+    }
     let leg = inner.sol_amount != 0 || inner.token_amount != 0;
 
     put_pk_if_set(&mut base.mint, inner.mint);
@@ -387,7 +415,7 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
         base.total_claimed_tokens = inner.total_claimed_tokens;
         base.current_sol_volume = inner.current_sol_volume;
         base.last_update_timestamp = inner.last_update_timestamp;
-        if !inner.ix_name.is_empty() {
+        if prefer_pump_instruction_name(&base.ix_name, &inner.ix_name) {
             base.ix_name = inner.ix_name;
         }
         base.mayhem_mode |= inner.mayhem_mode;
@@ -405,6 +433,7 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
         base.is_cashback_coin |= inner.is_cashback_coin;
         base.holder_rewards_bps = inner.holder_rewards_bps;
         base.holder_rewards = inner.holder_rewards;
+        base.creator_fee_unclaimed = inner.creator_fee_unclaimed;
     } else {
         put_u64_if_nonzero(&mut base.fee, inner.fee);
         put_u64_if_nonzero(&mut base.creator_fee, inner.creator_fee);
@@ -432,7 +461,7 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
         put_u64_if_nonzero(&mut base.holder_rewards, inner.holder_rewards);
         put_i64_if_nonzero(&mut base.timestamp, inner.timestamp);
         put_i64_if_nonzero(&mut base.last_update_timestamp, inner.last_update_timestamp);
-        if !inner.ix_name.is_empty() {
+        if prefer_pump_instruction_name(&base.ix_name, &inner.ix_name) {
             base.ix_name = inner.ix_name;
         }
         base.track_volume |= inner.track_volume;
@@ -481,6 +510,13 @@ fn merge_pumpfun_trade(base: &mut PumpFunTradeEvent, inner: PumpFunTradeEvent) {
 
     base.is_created_buy |= inner.is_created_buy;
     // 保留 base 的账户上下文字段（bonding_curve, associated_bonding_curve 等）
+}
+
+// CPI TradeEvent may say `buy_exact_quote_in`/`sell` for v2 and v3.
+// Preserve the actual compiled instruction's IDL name when available.
+fn prefer_pump_instruction_name(current: &str, incoming: &str) -> bool {
+    let versioned = |s: &str| s.ends_with("_v2") || s.ends_with("_v3");
+    !incoming.is_empty() && (!versioned(current) || versioned(incoming))
 }
 
 /// 合并 PumpFun Create 事件
@@ -589,6 +625,9 @@ fn merge_pumpswap_sell(base: &mut PumpSwapSellEvent, inner: PumpSwapSellEvent) {
 /// 3. 来自同一个交易（signature 相同）
 #[inline(always)]
 pub fn can_merge(base: &DexEvent, inner: &DexEvent) -> bool {
+    if pump_trade_identity_conflicts(base, inner) {
+        return false;
+    }
     // 检查 signature 是否相同
     if base.metadata().signature != inner.metadata().signature {
         return false;
@@ -614,6 +653,9 @@ pub fn can_merge(base: &DexEvent, inner: &DexEvent) -> bool {
 
         // PumpFun Migrate 可以合并
         (DexEvent::PumpFunMigrate(_), DexEvent::PumpFunMigrate(_)) => true,
+
+        (DexEvent::PumpSwapBuy(_), DexEvent::PumpSwapBuy(_))
+        | (DexEvent::PumpSwapSell(_), DexEvent::PumpSwapSell(_)) => true,
 
         // 其他组合不支持合并
         _ => false,
@@ -652,6 +694,9 @@ fn fill_str_if_empty(to: &mut String, from: &str) {
 /// 仅用 `ix` 补齐默认的账户类字段；`is_created_buy` 若仅 ix 侧为 true 则置位（创建首买标记）。
 #[inline]
 fn merge_pumpfun_trade_log_preferred(log: &mut PumpFunTradeEvent, ix: PumpFunTradeEvent) {
+    if log.third_program.is_none() {
+        log.third_program = ix.third_program.clone();
+    }
     fill_pk(&mut log.global, ix.global);
     fill_pk(&mut log.bonding_curve, ix.bonding_curve);
     fill_pk(&mut log.bonding_curve_v2, ix.bonding_curve_v2);
@@ -685,7 +730,7 @@ fn merge_pumpfun_trade_log_preferred(log: &mut PumpFunTradeEvent, ix: PumpFunTra
     if log.account.is_none() {
         log.account = ix.account;
     }
-    if log.ix_name.is_empty() && !ix.ix_name.is_empty() {
+    if prefer_pump_instruction_name(&log.ix_name, &ix.ix_name) {
         log.ix_name = ix.ix_name;
     }
     put_u64_if_nonzero(&mut log.amount, ix.amount);
@@ -694,9 +739,15 @@ fn merge_pumpfun_trade_log_preferred(log: &mut PumpFunTradeEvent, ix: PumpFunTra
     put_u64_if_nonzero(&mut log.spendable_sol_in, ix.spendable_sol_in);
     put_u64_if_nonzero(&mut log.spendable_quote_in, ix.spendable_quote_in);
     put_u64_if_nonzero(&mut log.min_tokens_out, ix.min_tokens_out);
-    put_u64_if_nonzero(&mut log.quote_amount, ix.quote_amount);
-    put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
-    put_u64_if_nonzero(&mut log.real_quote_reserves, ix.real_quote_reserves);
+    if log.quote_amount == 0 {
+        put_u64_if_nonzero(&mut log.quote_amount, ix.quote_amount);
+    }
+    if log.virtual_quote_reserves == 0 {
+        put_u64_if_nonzero(&mut log.virtual_quote_reserves, ix.virtual_quote_reserves);
+    }
+    if log.real_quote_reserves == 0 {
+        put_u64_if_nonzero(&mut log.real_quote_reserves, ix.real_quote_reserves);
+    }
     if !log.is_created_buy && ix.is_created_buy {
         log.is_created_buy = true;
     }
@@ -1255,7 +1306,33 @@ fn merge_orca_swap_context(log: &mut OrcaWhirlpoolSwapEvent, ix: OrcaWhirlpoolSw
     fill_pk(&mut log.oracle, ix.oracle);
 }
 
-pub fn merge_grpc_instruction_into_log(log: &mut DexEvent, ix: DexEvent) {
+fn wrapper_sources_conflict(a: &DexEvent, b: &DexEvent) -> bool {
+    a.third_program().zip(b.third_program()).is_some_and(|(a, b)| {
+        a.instruction_index != b.instruction_index || a.program_id != b.program_id
+    })
+}
+
+fn reconcile_trade_source(a: &mut DexEvent, b: &mut DexEvent) {
+    let Some((a_source, a_program)) = a.trade_source_mut() else { return };
+    let Some((b_source, b_program)) = b.trade_source_mut() else { return };
+    if a_program != b_program {
+        return;
+    }
+    if a_source.is_none() {
+        *a_source = b_source.clone();
+    }
+    if b_source.is_none() {
+        *b_source = a_source.clone();
+    }
+}
+
+pub fn merge_grpc_instruction_into_log(log: &mut DexEvent, mut ix: DexEvent) {
+    if wrapper_sources_conflict(log, &ix) {
+        return;
+    }
+    if std::mem::discriminant(log) == std::mem::discriminant(&ix) {
+        reconcile_trade_source(log, &mut ix);
+    }
     use DexEvent::*;
     match log {
         PumpFunTrade(l) => {
@@ -1346,6 +1423,24 @@ pub fn merge_grpc_instruction_into_log(log: &mut DexEvent, ix: DexEvent) {
         OrcaWhirlpoolSwap(l) => {
             if let OrcaWhirlpoolSwap(i) = ix {
                 merge_orca_swap_context(l, i);
+            }
+        }
+        RaydiumClmmIncreaseLiquidity(l) => {
+            if let RaydiumClmmIncreaseLiquidity(i) = ix {
+                fill_pk(&mut l.pool, i.pool);
+                fill_pk(&mut l.user, i.user);
+                fill_pk(&mut l.personal_position, i.personal_position);
+                l.amount0_max = i.amount0_max;
+                l.amount1_max = i.amount1_max;
+            }
+        }
+        RaydiumClmmDecreaseLiquidity(l) => {
+            if let RaydiumClmmDecreaseLiquidity(i) = ix {
+                fill_pk(&mut l.pool, i.pool);
+                fill_pk(&mut l.user, i.user);
+                fill_pk(&mut l.personal_position, i.personal_position);
+                l.amount0_min = i.amount0_min;
+                l.amount1_min = i.amount1_min;
             }
         }
         RaydiumClmmSwap(l) => {
@@ -1686,6 +1781,7 @@ mod tests {
         let mut base = DexEvent::PumpFunTrade(PumpFunTradeEvent {
             metadata: metadata.clone(),
             ix_name: "buy_exact_quote_in".to_string(),
+            is_buy: true,
             quote_mint,
             spendable_quote_in: 1_000,
             min_tokens_out: 2_000,
@@ -2701,4 +2797,38 @@ mod amm_swap_parameter_merge_tests {
             }
         }
     }
+}
+
+// Instruction/CPI events sharing an outer index may still be distinct trades.
+fn pump_trade_identity(event: &DexEvent) -> Option<(u8, Pubkey, Pubkey, Option<bool>)> {
+    use DexEvent::*;
+    match event {
+        PumpFunTrade(e) | PumpFunBuy(e) | PumpFunSell(e) | PumpFunBuyExactSolIn(e) => Some((
+            0,
+            e.mint,
+            e.user,
+            (e.mint != Pubkey::default()
+                || !e.ix_name.is_empty()
+                || e.sol_amount != 0
+                || e.token_amount != 0)
+                .then_some(e.is_buy),
+        )),
+        PumpSwapBuy(e) => Some((1, e.pool, e.user, Some(true))),
+        PumpSwapSell(e) => Some((1, e.pool, e.user, Some(false))),
+        _ => None,
+    }
+}
+
+fn pump_trade_identity_conflicts(base: &DexEvent, inner: &DexEvent) -> bool {
+    let (Some((kind, venue, user, buy)), Some((other, other_venue, other_user, other_buy))) =
+        (pump_trade_identity(base), pump_trade_identity(inner))
+    else {
+        return false;
+    };
+    kind == other
+        && ((buy.is_some() && other_buy.is_some() && buy != other_buy)
+            || (venue != Pubkey::default()
+                && other_venue != Pubkey::default()
+                && venue != other_venue)
+            || (user != Pubkey::default() && other_user != Pubkey::default() && user != other_user))
 }

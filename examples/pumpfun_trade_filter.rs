@@ -12,6 +12,9 @@ use sol_parser_sdk::grpc::{
 };
 use sol_parser_sdk::DexEvent;
 
+#[path = "support/grpc_config.rs"]
+mod grpc_config;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -40,12 +43,9 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Order Mode: {:?} (ultra-low latency)", config.order_mode);
     println!();
 
-    const GRPC_ENDPOINT: &str = "https://solana-yellowstone-grpc.publicnode.com:443";
-    const GRPC_AUTH_TOKEN: &str =
-        "cd1c3642f88c86f9f8e7f15831faf9f067b997c6ac2b72c81d115e8d071af77a";
     let grpc = YellowstoneGrpc::new_with_config(
-        GRPC_ENDPOINT.to_string(),
-        Some(std::env::var("GRPC_AUTH_TOKEN").unwrap_or_else(|_| GRPC_AUTH_TOKEN.to_string())),
+        grpc_config::endpoint()?,
+        grpc_config::auth_token(),
         config,
     )?;
 
@@ -219,6 +219,7 @@ async fn run_example() -> Result<(), Box<dyn std::error::Error>> {
 
                     DexEvent::PumpFunCreate(e) => {
                         create_count += 1;
+                        println!("Transaction version: {:?}", e.transaction_version);
                         let latency_us = now_us - e.metadata.grpc_recv_us;
                         println!("┌─────────────────────────────────────────────────────────────");
                         println!("│ 🆕 PumpFun CREATE #{}", event_count);

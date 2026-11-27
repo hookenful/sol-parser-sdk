@@ -7,3 +7,7 @@ mod types;
 
 pub use enum_impl::DexEvent;
 pub use types::*;
+
+mod raw_instruction;
+mod trade_source;
+pub use raw_instruction::*;

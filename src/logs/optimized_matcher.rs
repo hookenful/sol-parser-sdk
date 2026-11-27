@@ -303,12 +303,26 @@ mod discriminators {
         u64::from_le_bytes([228, 50, 246, 85, 203, 66, 134, 37]);
     pub const METEORA_DAMM_CREATE_POSITION: u64 =
         u64::from_le_bytes([156, 15, 119, 198, 29, 181, 221, 55]);
+    pub const METEORA_DAMM_CLAIM_POSITION_FEE: u64 =
+        u64::from_le_bytes([198, 182, 183, 52, 97, 12, 49, 56]);
+    pub const METEORA_DAMM_CLAIM_REWARD: u64 =
+        u64::from_le_bytes([218, 86, 147, 200, 235, 188, 215, 231]);
     pub const METEORA_DAMM_CLOSE_POSITION: u64 =
         u64::from_le_bytes([20, 145, 144, 68, 143, 142, 214, 178]);
     pub const METEORA_DAMM_UPDATE_DELEGATE_PERMISSION: u64 =
         u64::from_le_bytes([66, 188, 75, 151, 150, 232, 87, 93]);
     pub const METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD: u64 =
         u64::from_le_bytes([228, 66, 150, 195, 42, 62, 163, 13]);
+    pub const METEORA_DAMM_WITHDRAW_INELIGIBLE_REWARD: u64 =
+        u64::from_le_bytes([248, 215, 184, 78, 31, 180, 179, 168]);
+    pub const METEORA_DAMM_UPDATE_REWARD_FUNDER: u64 =
+        u64::from_le_bytes([76, 154, 208, 13, 40, 115, 246, 146]);
+    pub const METEORA_DAMM_UPDATE_REWARD_DURATION: u64 =
+        u64::from_le_bytes([149, 135, 65, 231, 129, 153, 65, 57]);
+    pub const METEORA_DAMM_INITIALIZE_REWARD: u64 =
+        u64::from_le_bytes([129, 91, 188, 3, 246, 52, 185, 249]);
+    pub const METEORA_DAMM_FUND_REWARD: u64 =
+        u64::from_le_bytes([104, 233, 237, 122, 199, 191, 121, 85]);
     pub const METEORA_DAMM_CREATE_CONFIG: u64 =
         u64::from_le_bytes([131, 207, 180, 174, 180, 73, 165, 54]);
     pub const METEORA_DAMM_CREATE_DYNAMIC_CONFIG: u64 =
@@ -316,6 +330,9 @@ mod discriminators {
 
     // Meteora DBC discriminators. Some values intentionally overlap DAMM V2,
     // so they must be routed with program context.
+    pub const METEORA_DBC_SWAP2: u64 = u64::from_le_bytes([189, 66, 51, 168, 38, 80, 117, 153]);
+    pub const METEORA_DBC_SWAP2_TRANSFER_HOOK: u64 =
+        u64::from_le_bytes([134, 59, 168, 120, 94, 51, 114, 231]);
     pub const METEORA_DBC_SWAP: u64 = u64::from_le_bytes([27, 60, 21, 213, 138, 170, 187, 147]);
     pub const METEORA_DBC_INITIALIZE_POOL: u64 =
         u64::from_le_bytes([228, 50, 246, 85, 203, 66, 134, 37]);
@@ -342,6 +359,8 @@ mod discriminators {
         u64::from_le_bytes([75, 122, 154, 48, 140, 74, 123, 163]);
     pub const METEORA_DLMM_CLAIM_FEE2: u64 =
         u64::from_le_bytes([232, 171, 242, 97, 58, 77, 35, 45]);
+    pub const METEORA_DLMM_CLAIM_REWARD2: u64 =
+        u64::from_le_bytes([27, 143, 244, 33, 80, 43, 110, 146]);
 }
 
 /// Optimized unified log parser with **discriminator predecode, decode-on-match** strategy
@@ -666,6 +685,13 @@ fn parse_log_optimized_inner(
         recent_blockhash: recent_blockhash.map(|s| bs58::encode(s).into_string()),
     };
 
+    if crate::logs::pump_upgrade::event_type(discriminator, program_id).is_some() {
+        return apply_event_type_filter(
+            crate::logs::pump_upgrade::parse(discriminator, data, metadata, program_id)?,
+            event_type_filter,
+        );
+    }
+
     if let Some(program_id) = program_id {
         return parse_program_scoped_event(
             program_id,
@@ -923,6 +949,12 @@ fn parse_log_optimized_inner(
         discriminators::METEORA_DAMM_CREATE_POSITION => {
             crate::logs::meteora_damm::parse_create_position_from_data(data, metadata)
         }
+        discriminators::METEORA_DAMM_CLAIM_POSITION_FEE => {
+            crate::logs::meteora_damm::parse_claim_position_fee_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_CLAIM_REWARD => {
+            crate::logs::meteora_damm::parse_claim_reward_from_data(data, metadata)
+        }
         discriminators::METEORA_DAMM_CLOSE_POSITION => {
             crate::logs::meteora_damm::parse_close_position_from_data(data, metadata)
         }
@@ -933,6 +965,21 @@ fn parse_log_optimized_inner(
             crate::logs::meteora_damm::parse_withdraw_dead_liquidity_reward_from_data(
                 data, metadata,
             )
+        }
+        discriminators::METEORA_DAMM_WITHDRAW_INELIGIBLE_REWARD => {
+            crate::logs::meteora_damm::parse_withdraw_ineligible_reward_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_UPDATE_REWARD_FUNDER => {
+            crate::logs::meteora_damm::parse_update_reward_funder_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_UPDATE_REWARD_DURATION => {
+            crate::logs::meteora_damm::parse_update_reward_duration_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_INITIALIZE_REWARD => {
+            crate::logs::meteora_damm::parse_initialize_reward_from_data(data, metadata)
+        }
+        discriminators::METEORA_DAMM_FUND_REWARD => {
+            crate::logs::meteora_damm::parse_fund_reward_from_data(data, metadata)
         }
         discriminators::METEORA_DAMM_CREATE_CONFIG => {
             crate::logs::meteora_damm::parse_create_config_from_data(data, metadata)
@@ -968,6 +1015,9 @@ fn program_scoped_discriminator_to_event_type(
     program_id: &Pubkey,
     discriminator: u64,
 ) -> Option<EventType> {
+    if let Some(kind) = crate::logs::pump_upgrade::event_type(discriminator, Some(program_id)) {
+        return Some(kind);
+    }
     match *program_id {
         program_ids::PUMPFUN_PROGRAM_ID => match discriminator {
             discriminators::PUMPFUN_CREATE => Some(EventType::PumpFunCreate),
@@ -1116,6 +1166,10 @@ fn program_scoped_discriminator_to_event_type(
             discriminators::METEORA_DAMM_CREATE_POSITION => {
                 Some(EventType::MeteoraDammV2CreatePosition)
             }
+            discriminators::METEORA_DAMM_CLAIM_POSITION_FEE => {
+                Some(EventType::MeteoraDammV2ClaimPositionFee)
+            }
+            discriminators::METEORA_DAMM_CLAIM_REWARD => Some(EventType::MeteoraDammV2ClaimReward),
             discriminators::METEORA_DAMM_CLOSE_POSITION => {
                 Some(EventType::MeteoraDammV2ClosePosition)
             }
@@ -1125,6 +1179,19 @@ fn program_scoped_discriminator_to_event_type(
             discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
                 Some(EventType::MeteoraDammV2WithdrawDeadLiquidityReward)
             }
+            discriminators::METEORA_DAMM_WITHDRAW_INELIGIBLE_REWARD => {
+                Some(EventType::MeteoraDammV2WithdrawIneligibleReward)
+            }
+            discriminators::METEORA_DAMM_UPDATE_REWARD_FUNDER => {
+                Some(EventType::MeteoraDammV2UpdateRewardFunder)
+            }
+            discriminators::METEORA_DAMM_UPDATE_REWARD_DURATION => {
+                Some(EventType::MeteoraDammV2UpdateRewardDuration)
+            }
+            discriminators::METEORA_DAMM_INITIALIZE_REWARD => {
+                Some(EventType::MeteoraDammV2InitializeReward)
+            }
+            discriminators::METEORA_DAMM_FUND_REWARD => Some(EventType::MeteoraDammV2FundReward),
             discriminators::METEORA_DAMM_CREATE_CONFIG => {
                 Some(EventType::MeteoraDammV2CreateConfig)
             }
@@ -1134,7 +1201,9 @@ fn program_scoped_discriminator_to_event_type(
             _ => None,
         },
         program_ids::METEORA_DBC_PROGRAM_ID => match discriminator {
-            discriminators::METEORA_DBC_SWAP => Some(EventType::MeteoraDbcSwap),
+            discriminators::METEORA_DBC_SWAP
+            | discriminators::METEORA_DBC_SWAP2
+            | discriminators::METEORA_DBC_SWAP2_TRANSFER_HOOK => Some(EventType::MeteoraDbcSwap),
             discriminators::METEORA_DBC_INITIALIZE_POOL => {
                 Some(EventType::MeteoraDbcInitializePool)
             }
@@ -1164,6 +1233,7 @@ fn program_scoped_discriminator_to_event_type(
             discriminators::METEORA_DLMM_CLAIM_FEE | discriminators::METEORA_DLMM_CLAIM_FEE2 => {
                 Some(EventType::MeteoraDlmmClaimFee)
             }
+            discriminators::METEORA_DLMM_CLAIM_REWARD2 => Some(EventType::MeteoraDlmmClaimReward),
             _ => None,
         },
         _ => None,
@@ -1504,6 +1574,12 @@ fn parse_program_scoped_event(
                 discriminators::METEORA_DAMM_CREATE_POSITION => {
                     crate::logs::meteora_damm::parse_create_position_from_data(data, metadata)
                 }
+                discriminators::METEORA_DAMM_CLAIM_POSITION_FEE => {
+                    crate::logs::meteora_damm::parse_claim_position_fee_from_data(data, metadata)
+                }
+                discriminators::METEORA_DAMM_CLAIM_REWARD => {
+                    crate::logs::meteora_damm::parse_claim_reward_from_data(data, metadata)
+                }
                 discriminators::METEORA_DAMM_CLOSE_POSITION => {
                     crate::logs::meteora_damm::parse_close_position_from_data(data, metadata)
                 }
@@ -1516,6 +1592,25 @@ fn parse_program_scoped_event(
                     crate::logs::meteora_damm::parse_withdraw_dead_liquidity_reward_from_data(
                         data, metadata,
                     )
+                }
+                discriminators::METEORA_DAMM_WITHDRAW_INELIGIBLE_REWARD => {
+                    crate::logs::meteora_damm::parse_withdraw_ineligible_reward_from_data(
+                        data, metadata,
+                    )
+                }
+                discriminators::METEORA_DAMM_UPDATE_REWARD_FUNDER => {
+                    crate::logs::meteora_damm::parse_update_reward_funder_from_data(data, metadata)
+                }
+                discriminators::METEORA_DAMM_UPDATE_REWARD_DURATION => {
+                    crate::logs::meteora_damm::parse_update_reward_duration_from_data(
+                        data, metadata,
+                    )
+                }
+                discriminators::METEORA_DAMM_INITIALIZE_REWARD => {
+                    crate::logs::meteora_damm::parse_initialize_reward_from_data(data, metadata)
+                }
+                discriminators::METEORA_DAMM_FUND_REWARD => {
+                    crate::logs::meteora_damm::parse_fund_reward_from_data(data, metadata)
                 }
                 discriminators::METEORA_DAMM_CREATE_CONFIG => {
                     crate::logs::meteora_damm::parse_create_config_from_data(data, metadata)
@@ -1535,6 +1630,14 @@ fn parse_program_scoped_event(
             match discriminator {
                 discriminators::METEORA_DBC_SWAP => {
                     crate::logs::meteora_dbc::parse_swap_from_data(data, metadata)
+                }
+                discriminators::METEORA_DBC_SWAP2
+                | discriminators::METEORA_DBC_SWAP2_TRANSFER_HOOK => {
+                    crate::logs::meteora_dbc::parse_swap2_from_data(
+                        data,
+                        metadata,
+                        discriminator == discriminators::METEORA_DBC_SWAP2_TRANSFER_HOOK,
+                    )
                 }
                 discriminators::METEORA_DBC_INITIALIZE_POOL => {
                     crate::logs::meteora_dbc::parse_initialize_pool_from_data(data, metadata)
@@ -1581,6 +1684,9 @@ fn parse_program_scoped_event(
                 }
                 discriminators::METEORA_DLMM_CLAIM_FEE2 => {
                     crate::logs::meteora_dlmm::parse_claim_fee2_from_data(data, metadata)
+                }
+                discriminators::METEORA_DLMM_CLAIM_REWARD2 => {
+                    crate::logs::meteora_dlmm::parse_claim_reward2_from_data(data, metadata)
                 }
                 _ => None,
             }
@@ -1639,6 +1745,13 @@ fn filter_pumpfun_trade_variant(
 /// Map discriminator to EventType (compile-time optimized match)
 #[inline(always)]
 fn discriminator_to_event_type(discriminator: u64) -> Option<EventType> {
+    if discriminator == discriminators::METEORA_DLMM_CLAIM_REWARD2 {
+        return Some(EventType::MeteoraDlmmClaimReward);
+    }
+    if let Some(kind) = crate::logs::pump_upgrade::event_type(discriminator, None) {
+        return Some(kind);
+    }
+
     match discriminator {
         discriminators::PUMPFUN_CREATE => Some(EventType::PumpFunCreate),
         discriminators::PUMPFUN_TRADE => Some(EventType::PumpFunTrade),
@@ -1751,6 +1864,10 @@ fn discriminator_to_event_type(discriminator: u64) -> Option<EventType> {
         discriminators::METEORA_DAMM_CREATE_POSITION => {
             Some(EventType::MeteoraDammV2CreatePosition)
         }
+        discriminators::METEORA_DAMM_CLAIM_POSITION_FEE => {
+            Some(EventType::MeteoraDammV2ClaimPositionFee)
+        }
+        discriminators::METEORA_DAMM_CLAIM_REWARD => Some(EventType::MeteoraDammV2ClaimReward),
         discriminators::METEORA_DAMM_CLOSE_POSITION => Some(EventType::MeteoraDammV2ClosePosition),
         discriminators::METEORA_DAMM_UPDATE_DELEGATE_PERMISSION => {
             Some(EventType::MeteoraDammV2UpdateDelegatePermission)
@@ -1758,6 +1875,19 @@ fn discriminator_to_event_type(discriminator: u64) -> Option<EventType> {
         discriminators::METEORA_DAMM_WITHDRAW_DEAD_LIQUIDITY_REWARD => {
             Some(EventType::MeteoraDammV2WithdrawDeadLiquidityReward)
         }
+        discriminators::METEORA_DAMM_WITHDRAW_INELIGIBLE_REWARD => {
+            Some(EventType::MeteoraDammV2WithdrawIneligibleReward)
+        }
+        discriminators::METEORA_DAMM_UPDATE_REWARD_FUNDER => {
+            Some(EventType::MeteoraDammV2UpdateRewardFunder)
+        }
+        discriminators::METEORA_DAMM_UPDATE_REWARD_DURATION => {
+            Some(EventType::MeteoraDammV2UpdateRewardDuration)
+        }
+        discriminators::METEORA_DAMM_INITIALIZE_REWARD => {
+            Some(EventType::MeteoraDammV2InitializeReward)
+        }
+        discriminators::METEORA_DAMM_FUND_REWARD => Some(EventType::MeteoraDammV2FundReward),
         discriminators::METEORA_DAMM_CREATE_CONFIG => Some(EventType::MeteoraDammV2CreateConfig),
         discriminators::METEORA_DAMM_CREATE_DYNAMIC_CONFIG => {
             Some(EventType::MeteoraDammV2CreateDynamicConfig)

@@ -33,9 +33,9 @@ pub const MIGRATE_BONDING_CURVE_CREATOR_EVENT: u64 =
 #[inline]
 pub fn normalize_pumpfun_ix_name(ix_name: &str) -> &str {
     match ix_name {
-        "buy_v2" => "buy",
-        "sell_v2" => "sell",
-        "buy_exact_quote_in_v2" => "buy_exact_quote_in",
+        "buy_v2" | "buy_v3" => "buy",
+        "sell_v2" | "sell_v3" => "sell",
+        "buy_exact_quote_in_v2" | "buy_exact_quote_in_v3" => "buy_exact_quote_in",
         other => other,
     }
 }
@@ -483,6 +483,7 @@ fn parse_create_event_optimized(
             virtual_quote_reserves,
             creator_fee_bps,
             is_holder_reward,
+            depth: data.get(offset + 1).copied().unwrap_or(0),
             ix_name: "create".to_string(),
             ..Default::default()
         }))
@@ -629,6 +630,7 @@ fn parse_trade_event_optimized(
         };
 
         let trade_event = PumpFunTradeEvent {
+            creator_fee_unclaimed: read_optional_u64(data, &mut offset),
             metadata,
             mint,
             sol_amount,
@@ -954,6 +956,7 @@ pub fn parse_trade_from_data(
         ) = read_trade_event_extensions(data, &mut offset)?;
 
         let trade_event = PumpFunTradeEvent {
+            creator_fee_unclaimed: read_optional_u64(data, &mut offset),
             metadata,
             mint,
             sol_amount,
@@ -1182,6 +1185,7 @@ pub fn parse_create_from_data(data: &[u8], metadata: EventMetadata) -> Option<De
             virtual_quote_reserves,
             creator_fee_bps,
             is_holder_reward,
+            depth: data.get(offset + 1).copied().unwrap_or(0),
             ix_name: "create".to_string(),
             ..Default::default()
         }))

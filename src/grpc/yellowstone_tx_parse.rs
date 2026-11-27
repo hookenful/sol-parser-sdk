@@ -16,6 +16,7 @@ const PROGRAM_DATA_PREFIX: &[u8] = b"Program data: ";
 struct ActiveProgram<'a> {
     encoded: &'a str,
     pubkey: Pubkey,
+    position: (i32, i32),
 }
 
 /// 解析成功的 Yellowstone 交易更新（含 meta）：并行 logs + enhanced instructions，再 log/ix 去重合并。
@@ -51,9 +52,9 @@ pub(crate) fn parse_transaction_core(
     };
     let slot = tx.slot;
     let idx = info.index;
-    let needs_pumpfun = filter.map(EventTypeFilter::includes_pumpfun).unwrap_or(true);
-    let is_created_buy =
-        needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
+    // Mint-scoped creation context is filled from native instructions below.
+    // Scanning logs here would compute a transaction-wide hint that is overwritten.
+    let is_created_buy = false;
 
     let (log_events, instr_events) = rayon::join(
         || {
@@ -87,7 +88,13 @@ pub(crate) fn parse_transaction_core(
 
     let mut events =
         crate::grpc::log_instr_dedup::dedupe_log_instruction_events(log_events, instr_events);
-    crate::grpc::transaction_meta::fill_recent_blockhash(&mut events, &info.transaction);
+    crate::core::common_filler::materialize_trade_execution_sources(
+        &mut events,
+        meta,
+        &info.transaction,
+    );
+    crate::core::common_filler::fill_pump_creation_context(&mut events, meta, &info.transaction);
+    crate::grpc::transaction_meta::fill_transaction_context(&mut events, &info.transaction);
     for event in &mut events {
         crate::core::common_filler::fill_token_balances(event, meta, &info.transaction);
     }
@@ -137,9 +144,9 @@ fn parse_transaction_core_sequential(
     };
     let slot = tx.slot;
     let idx = info.index;
-    let needs_pumpfun = filter.map(EventTypeFilter::includes_pumpfun).unwrap_or(true);
-    let is_created_buy =
-        needs_pumpfun && crate::logs::optimized_matcher::detect_pumpfun_create(&meta.log_messages);
+    // Mint-scoped creation context is filled from native instructions below.
+    // Scanning logs here would compute a transaction-wide hint that is overwritten.
+    let is_created_buy = false;
 
     let log_events = parse_logs(
         meta,
@@ -167,7 +174,13 @@ fn parse_transaction_core_sequential(
 
     let mut events =
         crate::grpc::log_instr_dedup::dedupe_log_instruction_events(log_events, instr_events);
-    crate::grpc::transaction_meta::fill_recent_blockhash(&mut events, &info.transaction);
+    crate::core::common_filler::materialize_trade_execution_sources(
+        &mut events,
+        meta,
+        &info.transaction,
+    );
+    crate::core::common_filler::fill_pump_creation_context(&mut events, meta, &info.transaction);
+    crate::grpc::transaction_meta::fill_transaction_context(&mut events, &info.transaction);
     for event in &mut events {
         crate::core::common_filler::fill_token_balances(event, meta, &info.transaction);
     }
@@ -198,7 +211,7 @@ fn parse_logs(
     let mut result = Vec::with_capacity(4);
 
     for log in logs {
-        if log.as_bytes().starts_with(PROGRAM_DATA_PREFIX) {
+        if log.as_bytes().starts_with(PROGRAM_DATA_PREFIX) || log.contains("ray_log: ") {
             let current_program = active_program_stack.last().map(|active| &active.pubkey);
             if let Some(mut e) = crate::logs::parse_log_with_program_id(
                 log,
@@ -212,12 +225,35 @@ fn parse_logs(
                 None,
                 current_program,
             ) {
-                crate::core::account_dispatcher::fill_accounts_with_invoke_context(
-                    &mut e,
-                    meta,
-                    transaction,
-                    &invokes,
-                );
+                if let Some(active) = active_program_stack.last() {
+                    if let Ok(outer_index) = usize::try_from(active.position.0) {
+                        crate::core::common_filler::mark_trade_execution_source(
+                            &mut e,
+                            outer_index,
+                            meta,
+                            transaction,
+                        );
+                    }
+                }
+                if matches!(&e, DexEvent::RaydiumAmmV4Swap(_)) {
+                    let mut scoped = crate::core::invoke_context::InvokeContext::default();
+                    if let Some(active) = active_program_stack.last() {
+                        scoped.push(active.pubkey, active.position);
+                    }
+                    crate::core::account_dispatcher::fill_accounts_with_invoke_context(
+                        &mut e,
+                        meta,
+                        transaction,
+                        &scoped,
+                    );
+                } else {
+                    crate::core::account_dispatcher::fill_accounts_with_invoke_context(
+                        &mut e,
+                        meta,
+                        transaction,
+                        &invokes,
+                    );
+                }
                 crate::core::common_filler::fill_data_with_invoke_context(
                     &mut e,
                     meta,
@@ -238,7 +274,11 @@ fn parse_logs(
             }
             let pk = crate::grpc::program_ids::known_program_id(pid).unwrap_or_default();
             active_program_stack.truncate(depth - 1);
-            active_program_stack.push(ActiveProgram { encoded: pid, pubkey: pk });
+            active_program_stack.push(ActiveProgram {
+                encoded: pid,
+                pubkey: pk,
+                position: (outer_idx, inner_idx),
+            });
             if crate::grpc::program_ids::needs_invoke_context(&pk) {
                 invokes.push(pk, (outer_idx, inner_idx));
             }
@@ -257,7 +297,7 @@ fn parse_logs(
 
 /// Next outer instruction index that emits an `invoke [1]` log line.
 #[inline]
-fn next_logged_outer_index(transaction: &Option<Transaction>, current: i32) -> i32 {
+pub(crate) fn next_logged_outer_index(transaction: &Option<Transaction>, current: i32) -> i32 {
     let mut next = current + 1;
     while is_logless_outer(transaction, next) {
         next += 1;

@@ -176,3 +176,12 @@
 1. 使用 Pump 事件构建卖出参数时，务必在合并/下发前调用 **fill_trade_accounts**，以便 `creator_vault` 来自当前指令账户，避免 2006 seeds 错误。
 2. 不要只依赖 IDL 固定账户数判断升级后交易是否完整；Pump/PumpSwap 的新增账户都在 remaining accounts。
 3. 保持 IDL 与 sol-trade-sdk 定期同步（复制 `idl/*.json` → `idl/`），以便新指令或新账户加入时解析与注释仍正确。
+
+
+## Pump upgrade (October 2026)
+
+Compact Pump v3 and PumpSwap v2 trades use their new 17-account layouts. New typed events cover `PumpFunPostCompleteBuy`, `PumpFunComplete`, `PumpFunSweepBondingCurveFee` and `PumpSwapSweepPoolFee`, with program-scoped log and CPI parsing. Historical SOL CompleteEvent payloads remain supported. Curve/pool retained fees and synthetic counters are exposed; optional historical tails default to zero.
+
+For completing buys, aggregate TradeEvent and PostCompleteBuyEvent amounts within the same invocation. CompleteEvent is a notification. Multi-hop execution retains each venue’s trade events in order; separate venues are not merged into one fill. There is no route-intent decoder or raw-event callback. Shred candidates carry original wrapper input in third_program and remain unresolved; gRPC/RPC uses actual execution metadata.
+
+Reference: [pump-public-docs](https://github.com/pump-fun/pump-public-docs/tree/8cda1fa30ea658b20909d8aedf002047119388d2). Validation uses offline official IDL fixtures; no live trade is sent by the tests.

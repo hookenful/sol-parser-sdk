@@ -98,6 +98,7 @@ mod tests {
             assert_eq!(event.config, config);
             assert!(event.is_buy());
             assert!(event.has_referral);
+            assert_eq!(event.has_transfer_hook, transfer_hook);
             assert_eq!(event.transfer_hook, transfer_hook);
             assert_eq!(event.swap_mode, 1);
             assert_eq!((event.amount_0, event.amount_1), (100, 7));
@@ -115,14 +116,16 @@ mod tests {
     }
 
     #[test]
-    fn exact_out_limit_is_its_output() {
+    fn exact_out_limit_uses_maximum_amount_in() {
         let body = swap2_body(Pubkey::new_unique(), Pubkey::new_unique(), 2);
         let Some(DexEvent::MeteoraDbcSwap(event)) =
             parse(&discriminators::SWAP2, &body, EventMetadata::default())
         else {
             panic!("expected a DBC swap");
         };
-        assert_eq!(event.minimum_amount_out, 100);
+        assert_eq!(event.amount_0, 100);
+        assert_eq!(event.minimum_amount_out, 0);
+        assert_eq!(event.maximum_amount_in, 7);
     }
 
     #[test]

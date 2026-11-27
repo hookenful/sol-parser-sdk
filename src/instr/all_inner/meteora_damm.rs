@@ -31,12 +31,26 @@ pub mod discriminators {
         [228, 69, 165, 46, 81, 203, 154, 29, 228, 50, 246, 85, 203, 66, 134, 37];
     pub const CREATE_POSITION: [u8; 16] =
         [228, 69, 165, 46, 81, 203, 154, 29, 156, 15, 119, 198, 29, 181, 221, 55];
+    pub const CLAIM_POSITION_FEE: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 198, 182, 183, 52, 97, 12, 49, 56];
+    pub const CLAIM_REWARD: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 218, 86, 147, 200, 235, 188, 215, 231];
     pub const CLOSE_POSITION: [u8; 16] =
         [228, 69, 165, 46, 81, 203, 154, 29, 20, 145, 144, 68, 143, 142, 214, 178];
     pub const UPDATE_DELEGATE_PERMISSION: [u8; 16] =
         [228, 69, 165, 46, 81, 203, 154, 29, 66, 188, 75, 151, 150, 232, 87, 93];
     pub const WITHDRAW_DEAD_LIQUIDITY_REWARD: [u8; 16] =
         [228, 69, 165, 46, 81, 203, 154, 29, 228, 66, 150, 195, 42, 62, 163, 13];
+    pub const WITHDRAW_INELIGIBLE_REWARD: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 248, 215, 184, 78, 31, 180, 179, 168];
+    pub const UPDATE_REWARD_FUNDER: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 76, 154, 208, 13, 40, 115, 246, 146];
+    pub const UPDATE_REWARD_DURATION: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 149, 135, 65, 231, 129, 153, 65, 57];
+    pub const INITIALIZE_REWARD: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 129, 91, 188, 3, 246, 52, 185, 249];
+    pub const FUND_REWARD: [u8; 16] =
+        [228, 69, 165, 46, 81, 203, 154, 29, 104, 233, 237, 122, 199, 191, 121, 85];
     pub const CREATE_CONFIG: [u8; 16] =
         [228, 69, 165, 46, 81, 203, 154, 29, 131, 207, 180, 174, 180, 73, 165, 54];
     pub const CREATE_DYNAMIC_CONFIG: [u8; 16] =
@@ -58,6 +72,12 @@ pub fn parse(disc: &[u8; 16], data: &[u8], metadata: EventMetadata) -> Option<De
             crate::logs::meteora_damm::parse_initialize_pool_from_data(data, metadata)
         }
         discriminators::CREATE_POSITION => parse_create_position(data, metadata),
+        discriminators::CLAIM_POSITION_FEE => {
+            crate::logs::meteora_damm::parse_claim_position_fee_from_data(data, metadata)
+        }
+        discriminators::CLAIM_REWARD => {
+            crate::logs::meteora_damm::parse_claim_reward_from_data(data, metadata)
+        }
         discriminators::CLOSE_POSITION => parse_close_position(data, metadata),
         discriminators::UPDATE_DELEGATE_PERMISSION => {
             crate::logs::meteora_damm::parse_update_delegate_permission_from_data(data, metadata)
@@ -66,6 +86,21 @@ pub fn parse(disc: &[u8; 16], data: &[u8], metadata: EventMetadata) -> Option<De
             crate::logs::meteora_damm::parse_withdraw_dead_liquidity_reward_from_data(
                 data, metadata,
             )
+        }
+        discriminators::WITHDRAW_INELIGIBLE_REWARD => {
+            crate::logs::meteora_damm::parse_withdraw_ineligible_reward_from_data(data, metadata)
+        }
+        discriminators::UPDATE_REWARD_FUNDER => {
+            crate::logs::meteora_damm::parse_update_reward_funder_from_data(data, metadata)
+        }
+        discriminators::UPDATE_REWARD_DURATION => {
+            crate::logs::meteora_damm::parse_update_reward_duration_from_data(data, metadata)
+        }
+        discriminators::INITIALIZE_REWARD => {
+            crate::logs::meteora_damm::parse_initialize_reward_from_data(data, metadata)
+        }
+        discriminators::FUND_REWARD => {
+            crate::logs::meteora_damm::parse_fund_reward_from_data(data, metadata)
         }
         discriminators::CREATE_CONFIG => {
             crate::logs::meteora_damm::parse_create_config_from_data(data, metadata)

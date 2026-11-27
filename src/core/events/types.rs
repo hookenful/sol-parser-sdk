@@ -60,8 +60,13 @@ pub fn is_pumpfun_solscan_sol_quote_mint(quote_mint: Pubkey) -> bool {
 pub struct EventMetadata {
     pub signature: Signature,
     pub slot: u64,
-    pub tx_index: u64, // 交易在slot中的索引，参考solana-streamer
+    /// Caller-supplied transaction position. Yellowstone supplies its node index;
+    /// Entries clients enumerate within one received message, restarting at zero.
+    /// Not a slot-wide identity on Shred paths; deduplicate transactions by signature.
+    pub tx_index: u64,
     pub block_time_us: i64,
+    /// Local receive timestamp in microseconds, supplied by the ingestion path.
+    /// Not a chain execution timestamp or a guarantee of execution order.
     pub grpc_recv_us: i64,
     /// Transaction's recent blockhash as base58 string, when available.
     #[serde(default)]
@@ -149,6 +154,10 @@ pub struct BaseMintParam {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaydiumLaunchlabTradeEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -308,6 +317,14 @@ impl RaydiumLaunchlabMigrateAmmEvent {
 /// - INSTRUCTION: 来自指令解析，用于补充事件缺失的上下文信息
 #[derive(Debug, Clone, Serialize, Deserialize, Default, BorshDeserialize)]
 pub struct PumpFunTradeEvent {
+    /// Original outer wrapper instruction; present for unresolved Shred
+    /// candidates as well as confirmed gRPC CPI trades. Missing fields retain defaults.
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
+    #[borsh(skip)]
+    #[serde(default)]
+    pub creator_fee_unclaimed: u64,
     #[borsh(skip)]
     pub metadata: EventMetadata,
 
@@ -335,7 +352,8 @@ pub struct PumpFunTradeEvent {
     pub total_claimed_tokens: u64,
     pub current_sol_volume: u64,
     pub last_update_timestamp: i64,
-    /// Instruction name as emitted by the program, for example `"buy"`, `"buy_v2"`,
+    /// Compiled instruction's IDL name when available; otherwise the event-log name,
+    /// for example `"buy"`, `"buy_v2"`,
     /// `"sell"`, `"sell_v2"`, `"buy_exact_sol_in"`, or `"buy_exact_quote_in_v2"`.
     pub ix_name: String,
     /// 与链上 / Explorer `tradeEvent` 中 `mayhemMode` 一致（gRPC 日志解析填充；勿用 fee 地址推断）。
@@ -488,7 +506,7 @@ pub enum PumpFeesConfigStatus {
 }
 
 /// IDL `Fees`
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PumpFeesFees {
     pub lp_fee_bps: u64,
     pub protocol_fee_bps: u64,
@@ -627,6 +645,19 @@ pub struct PumpFunMigrateBondingCurveCreatorEvent {
 /// PumpFun Create Token Event - Based on IDL CreateEvent definition
 #[derive(Debug, Clone, Serialize, Deserialize, Default, BorshDeserialize)]
 pub struct PumpFunCreateTokenEvent {
+    /// ALT account keys referenced by the whole transaction, in message order.
+    /// None when there are no lookups or transaction context is unavailable.
+    #[borsh(skip)]
+    #[serde(default)]
+    pub alt_addresses: Option<Vec<Pubkey>>,
+    /// Transaction message version from Shred/gRPC/RPC context, independent of the
+    /// Pump instruction version. None when that context is unavailable.
+    #[borsh(skip)]
+    #[serde(default)]
+    pub transaction_version: Option<crate::grpc::YellowstoneMessageVersion>,
+    #[borsh(skip)]
+    #[serde(default)]
+    pub depth: u8,
     #[borsh(skip)]
     pub metadata: EventMetadata,
     // IDL CreateEvent 字段（Borsh 序列化字段，按顺序）
@@ -700,6 +731,16 @@ pub struct PumpFunCreateTokenEvent {
 /// 与 solana-streamer 对齐；指令解析时从 accounts 0..15 填充。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, BorshDeserialize)]
 pub struct PumpFunCreateV2TokenEvent {
+    /// ALT account keys referenced by the whole transaction, in message order.
+    /// None when there are no lookups or transaction context is unavailable.
+    #[borsh(skip)]
+    #[serde(default)]
+    pub alt_addresses: Option<Vec<Pubkey>>,
+    /// Transaction message version from Shred/gRPC/RPC context, independent of the
+    /// Pump instruction version. None when that context is unavailable.
+    #[borsh(skip)]
+    #[serde(default)]
+    pub transaction_version: Option<crate::grpc::YellowstoneMessageVersion>,
     #[borsh(skip)]
     pub metadata: EventMetadata,
     pub name: String,
@@ -765,6 +806,9 @@ pub struct PumpFunCreateV2TokenEvent {
 /// Produced by: buy, sell, buy_exact_sol_in instructions
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpSwapTradeEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     pub metadata: EventMetadata,
     // === IDL TradeEvent fields ===
     pub mint: Pubkey,
@@ -794,6 +838,13 @@ pub struct PumpSwapTradeEvent {
 /// PumpSwap Buy Event
 #[derive(Debug, Clone, Serialize, Deserialize, Default, BorshDeserialize)]
 pub struct PumpSwapBuyEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
+    #[borsh(skip)]
+    #[serde(default)]
+    pub creator_fee_unclaimed: u64,
     #[borsh(skip)]
     pub metadata: EventMetadata,
     pub timestamp: i64,
@@ -880,6 +931,13 @@ pub struct PumpSwapBuyEvent {
 /// PumpSwap Sell Event
 #[derive(Debug, Clone, Serialize, Deserialize, Default, BorshDeserialize)]
 pub struct PumpSwapSellEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
+    #[borsh(skip)]
+    #[serde(default)]
+    pub creator_fee_unclaimed: u64,
     #[borsh(skip)]
     pub metadata: EventMetadata,
     pub timestamp: i64,
@@ -1116,6 +1174,10 @@ pub struct PumpSwapWithdrawEvent {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaydiumCpmmSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -1190,6 +1252,21 @@ pub struct RaydiumCpmmSwapEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     #[serde(default)]
     pub output_token_account: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub input_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub output_mint: Pubkey,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub trade_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub creator_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub creator_fee_on_input: bool,
 }
 
 /// Raydium CPMM Deposit Event
@@ -1242,6 +1319,10 @@ pub struct RaydiumCpmmWithdrawEvent {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaydiumClmmSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -1343,6 +1424,10 @@ pub struct RaydiumClmmDecreaseLiquidityEvent {
     pub amount1_min: u64,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub user: Pubkey,
+    /// Personal position PDA, not the NFT token account or mint.
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub personal_position: Pubkey,
 }
 
 /// Raydium CLMM Collect Fee Event
@@ -1407,6 +1492,10 @@ pub struct RaydiumClmmIncreaseLiquidityEvent {
     pub amount1_max: u64,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub user: Pubkey,
+    /// Personal position PDA, not the NFT token account or mint.
+    #[serde(default)]
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub personal_position: Pubkey,
 }
 
 /// Raydium CLMM Liquidity Change Event (IDL `LiquidityChangeEvent`)
@@ -1609,6 +1698,10 @@ pub struct RaydiumAmmWithdrawPnlEvent {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RaydiumAmmV4SwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -2010,6 +2103,10 @@ pub struct PumpSwapPoolAccountEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpSwapPool {
+    #[serde(default)]
+    pub protocol_fees: u64,
+    #[serde(default)]
+    pub creator_fees: u64,
     pub pool_bump: u8,
     pub index: u16,
     pub creator: Pubkey,
@@ -2043,6 +2140,18 @@ pub struct PumpFunBondingCurveAccountEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpFunBondingCurve {
+    #[serde(default)]
+    pub creator_fee: u64,
+    #[serde(default)]
+    pub protocol_fees: u64,
+    #[serde(default)]
+    pub depth: u8,
+    #[serde(default)]
+    pub initial_virtual_quote_reserves: u64,
+    #[serde(default)]
+    pub post_complete_base_out: u64,
+    #[serde(default)]
+    pub post_complete_quote_in: u64,
     pub virtual_token_reserves: u64,
     pub virtual_quote_reserves: u64,
     pub real_token_reserves: u64,
@@ -2070,6 +2179,8 @@ pub struct PumpFunFeeConfigAccountEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PumpFunFeeConfig {
+    #[serde(default)]
+    pub exotic_flat_fees: PumpFeesFees,
     pub bump: u8,
     pub admin: Pubkey,
     pub flat_fees: PumpFeesFees,
@@ -2144,6 +2255,17 @@ pub struct PumpFunGlobalAccountEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PumpFunGlobal {
+    #[serde(default)]
+    pub creator_fee_configurable: bool,
+    #[serde(default)]
+    pub max_configurable_creator_fee_bps: u64,
+    #[serde(default)]
+    pub holder_reward_claim_authority: Pubkey,
+    #[serde(default)]
+    pub is_holder_reward_enabled: bool,
+    #[serde(default)]
+    pub max_curve_depth: u8,
+
     pub initialized: bool,
     pub authority: Pubkey,
     pub fee_recipient: Pubkey,
@@ -2562,6 +2684,10 @@ pub struct NonceAccountEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 pub struct OrcaWhirlpoolSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -2649,23 +2775,15 @@ pub struct OrcaWhirlpoolSwapEvent {
 pub struct OrcaWhirlpoolLiquidityIncreasedEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
-
-    // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub whirlpool: Pubkey,   // 32 bytes
-    pub liquidity: u128,     // 16 bytes
-    pub token_a_amount: u64, // 8 bytes
-    pub token_b_amount: u64, // 8 bytes
-
-    // === 非 Borsh 字段（从日志或其他来源填充）===
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    // Current official LiquidityIncreased Borsh payload, in wire order.
+    pub whirlpool: Pubkey,
     pub position: Pubkey,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub tick_lower_index: i32,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub tick_upper_index: i32,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub liquidity: u128,
+    pub token_a_amount: u64,
+    pub token_b_amount: u64,
     pub token_a_transfer_fee: u64,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub token_b_transfer_fee: u64,
 }
 
@@ -2675,23 +2793,15 @@ pub struct OrcaWhirlpoolLiquidityIncreasedEvent {
 pub struct OrcaWhirlpoolLiquidityDecreasedEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
-
-    // === Borsh 序列化字段（从 inner instruction data 读取）===
-    pub whirlpool: Pubkey,   // 32 bytes
-    pub liquidity: u128,     // 16 bytes
-    pub token_a_amount: u64, // 8 bytes
-    pub token_b_amount: u64, // 8 bytes
-
-    // === 非 Borsh 字段（从日志或其他来源填充）===
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    // Current official LiquidityDecreased Borsh payload, in wire order.
+    pub whirlpool: Pubkey,
     pub position: Pubkey,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub tick_lower_index: i32,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub tick_upper_index: i32,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub liquidity: u128,
+    pub token_a_amount: u64,
+    pub token_b_amount: u64,
     pub token_a_transfer_fee: u64,
-    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub token_b_transfer_fee: u64,
 }
 
@@ -2716,6 +2826,9 @@ pub struct OrcaWhirlpoolPoolInitializedEvent {
 /// Meteora Pools Swap Event
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MeteoraPoolsSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     pub metadata: EventMetadata,
     pub in_amount: u64,
     pub out_amount: u64,
@@ -3058,6 +3171,10 @@ pub struct MeteoraPoolsSetPoolFeesEvent {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeteoraDammV2SwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -3316,6 +3433,59 @@ pub struct MeteoraDammV2WithdrawDeadLiquidityRewardEvent {
     pub reward_mint: Pubkey,
     pub amount: u64,
 }
+/// Meteora DAMM V2 Withdraw Ineligible Reward Event (IDL `EvtWithdrawIneligibleReward`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2WithdrawIneligibleRewardEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub reward_mint: Pubkey,
+    pub amount: u64,
+}
+/// Meteora DAMM V2 UpdateRewardFunder Event (IDL `EvtUpdateRewardFunder`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2UpdateRewardFunderEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub reward_index: u8,
+    pub old_funder: Pubkey,
+    pub new_funder: Pubkey,
+}
+/// Meteora DAMM V2 UpdateRewardDuration Event (IDL `EvtUpdateRewardDuration`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2UpdateRewardDurationEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub reward_index: u8,
+    pub old_reward_duration: u64,
+    pub new_reward_duration: u64,
+}
+/// Meteora DAMM V2 InitializeReward Event (IDL `EvtInitializeReward`)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2InitializeRewardEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub reward_mint: Pubkey,
+    pub funder: Pubkey,
+    pub creator: Pubkey,
+    pub reward_index: u8,
+    pub reward_duration: u64,
+}
+/// Meteora DAMM V2 Fund Reward Event (IDL `EvtFundReward`).
+/// Amount includes net new funding and carried empty rewards; the post rate also
+/// includes unexpired rewards from the previous period.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MeteoraDammV2FundRewardEvent {
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub funder: Pubkey,
+    pub mint_reward: Pubkey,
+    pub reward_index: u8,
+    pub amount: u64,
+    pub transfer_fee_excluded_amount_in: u64,
+    pub reward_duration_end: u64,
+    pub pre_reward_rate: u128,
+    pub post_reward_rate: u128,
+}
 
 /// Meteora DAMM V2 Create Config Event (IDL `EvtCreateConfig`, includes 0.2.4 `permission`)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -3361,13 +3531,44 @@ pub struct MeteoraDbcHookAccount {
 }
 
 /// Meteora DBC Swap Event (IDL `EvtSwap2`, `EvtSwap2WithTransferHook`; the
-/// legacy `EvtSwap` when parsed from a log).
+/// legacy `EvtSwap` when parsed from a log or legacy event CPI).
 ///
 /// The program emits events as event-CPI inner instructions, so swaps come
 /// from the instruction path. A `swap` or `swap2` emits `EvtSwap` and
-/// `EvtSwap2` for the same trade; only `EvtSwap2` becomes an event.
+/// `EvtSwap2` for the same trade; `prefer_current_dbc_events` keeps `EvtSwap2`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeteoraDbcSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
+    #[serde(default)]
+    pub event_version: u8,
+    /// 0 exact in, 1 partial fill, 2 exact out.
+    #[serde(default)]
+    pub swap_mode: u8,
+    #[serde(default)]
+    pub amount_0: u64,
+    #[serde(default)]
+    pub amount_1: u64,
+    #[serde(default)]
+    pub maximum_amount_in: u64,
+    #[serde(default)]
+    pub included_fee_input_amount: u64,
+    /// Curve remainder uses fee-excluded units with input fees, not gross unspent wallet funding.
+    #[serde(default)]
+    pub amount_left: u64,
+    /// The pool's quote reserve after the swap.
+    #[serde(default)]
+    pub quote_reserve_amount: u64,
+    /// The quote reserve at which the curve completes.
+    #[serde(default)]
+    pub migration_threshold: u64,
+    #[serde(default)]
+    pub has_transfer_hook: bool,
+    /// Alias of `has_transfer_hook` kept for fork consumers (`swap2_with_transfer_hook`).
+    #[serde(default)]
+    pub transfer_hook: bool,
+
     pub metadata: EventMetadata,
     pub pool: Pubkey,
     pub config: Pubkey,
@@ -3376,8 +3577,7 @@ pub struct MeteoraDbcSwapEvent {
     pub has_referral: bool,
     /// What the payer sent, the fee included (`included_fee_input_amount`).
     pub amount_in: u64,
-    /// The payer's limit: the minimum output, or the exact output of an
-    /// exact-out swap.
+    /// Minimum output limit for exact-in / partial-fill swaps (0 for exact-out).
     pub minimum_amount_out: u64,
     /// What reached the curve: `amount_in` less the fee when the fee is taken
     /// from the input (`excluded_fee_input_amount`).
@@ -3389,27 +3589,6 @@ pub struct MeteoraDbcSwapEvent {
     pub protocol_fee: u64,
     pub referral_fee: u64,
     pub current_timestamp: u64,
-
-    // === `EvtSwap2` fields ===
-    /// 0 exact in, 1 partial fill, 2 exact out.
-    #[serde(default)]
-    pub swap_mode: u8,
-    #[serde(default)]
-    pub amount_0: u64,
-    #[serde(default)]
-    pub amount_1: u64,
-    /// Input a partial fill gave back because the curve completed.
-    #[serde(default)]
-    pub amount_left: u64,
-    /// The pool's quote reserve after the swap.
-    #[serde(default)]
-    pub quote_reserve_amount: u64,
-    /// The quote reserve at which the curve completes.
-    #[serde(default)]
-    pub migration_threshold: u64,
-    /// A transfer-hook pool, traded with `swap2_with_transfer_hook`.
-    #[serde(default)]
-    pub transfer_hook: bool,
 
     // === Accounts of the swap instruction ===
     #[serde(default)]
@@ -3488,6 +3667,10 @@ pub struct MeteoraDbcCurveCompleteEvent {
 #[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MeteoraDlmmSwapEvent {
+    /// Original outer router instruction, absent for direct protocol calls.
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_program: Option<super::RawInstructionPayload>,
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     pub metadata: EventMetadata,
 
@@ -3543,6 +3726,24 @@ pub struct MeteoraDlmmSwapEvent {
     #[cfg_attr(feature = "parse-borsh", borsh(skip))]
     #[serde(default)]
     pub bin_arrays: Vec<Pubkey>,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub event_version: u8,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub amount_left: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub mm_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub limit_order_fee: u64,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub fees_on_input: bool,
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    #[serde(default)]
+    pub fees_on_token_x: bool,
 }
 
 /// Meteora DLMM Add Liquidity Event
@@ -4166,4 +4367,100 @@ mod amm_swap_wire_compat_tests {
         assert!(e.ix_name.is_empty());
         assert_eq!((e.instruction_amount_in, e.instruction_amount_out), (0, 0));
     }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PumpFunPostCompleteBuyEvent {
+    pub metadata: EventMetadata,
+    pub user: Pubkey,
+    pub mint: Pubkey,
+    pub bonding_curve: Pubkey,
+    pub quote_mint: Pubkey,
+    pub timestamp: i64,
+    pub base_out: u64,
+    pub quote_in: u64,
+    pub fee_basis_points: u64,
+    pub fee: u64,
+    pub creator_fee_basis_points: u64,
+    pub creator_fee: u64,
+    pub buyback_fee: u64,
+    pub pool_base_reserves_before: u64,
+    pub pool_quote_reserves_before: u64,
+    pub pool_base_reserves_after: u64,
+    pub pool_quote_reserves_after: u64,
+}
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PumpFunSweepBondingCurveFeeEvent {
+    pub metadata: EventMetadata,
+    pub timestamp: i64,
+    pub mint: Pubkey,
+    pub bonding_curve: Pubkey,
+    pub quote_mint: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub bucket: u8,
+}
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PumpFunCompleteEvent {
+    pub metadata: EventMetadata,
+    pub user: Pubkey,
+    pub mint: Pubkey,
+    pub bonding_curve: Pubkey,
+    pub timestamp: i64,
+    pub quote_mint: Pubkey,
+}
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PumpSwapSweepPoolFeeEvent {
+    pub metadata: EventMetadata,
+    pub timestamp: i64,
+    pub pool: Pubkey,
+    pub base_mint: Pubkey,
+    pub quote_mint: Pubkey,
+    pub recipient: Pubkey,
+    pub payer: Pubkey,
+    pub amount: u64,
+    pub bucket: u8,
+}
+
+/// Official EvtClaimPositionFee gross quantities before token transfer fees.
+#[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeteoraDammV2ClaimPositionFeeEvent {
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub position: Pubkey,
+    pub owner: Pubkey,
+    pub fee_a_claimed: u64,
+    pub fee_b_claimed: u64,
+}
+
+/// Official EvtClaimReward accrued gross amount cleared from the position.
+/// A frozen-vault skip can emit a nonzero total_reward without transferring tokens.
+/// Determine wallet credits from actual token transfers and net balance changes.
+#[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeteoraDammV2ClaimRewardEvent {
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub position: Pubkey,
+    pub owner: Pubkey,
+    pub mint_reward: Pubkey,
+    pub reward_index: u8,
+    pub total_reward: u64,
+}
+
+/// Modern DLMM ClaimReward2; accompanying legacy duplicate notification is not emitted.
+#[cfg_attr(feature = "parse-borsh", derive(BorshDeserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeteoraDlmmClaimRewardEvent {
+    #[cfg_attr(feature = "parse-borsh", borsh(skip))]
+    pub metadata: EventMetadata,
+    pub pool: Pubkey,
+    pub position: Pubkey,
+    pub owner: Pubkey,
+    pub reward_index: u64,
+    pub total_reward: u64,
+    pub active_bin_id: i32,
 }

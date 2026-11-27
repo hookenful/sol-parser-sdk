@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::{instr::read_pubkey_fast, DexEvent};
+use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use yellowstone_grpc_proto::prelude::{TokenBalance, Transaction, TransactionStatusMeta};
@@ -14,7 +15,8 @@ use yellowstone_grpc_proto::prelude::{TokenBalance, Transaction, TransactionStat
 ///
 /// Yellowstone uses `Message.config` to identify V1. The older `versioned` flag
 /// alone cannot distinguish V0 from V1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum YellowstoneMessageVersion {
     Legacy,
     V0,
@@ -37,21 +39,35 @@ pub fn yellowstone_message_version(
     }
 }
 
-/// Fill the public recent blockhash field once final events are known.
+/// Fill creation transaction context and the recent blockhash once final events are known.
 ///
 /// Encoding after log/instruction deduplication avoids doing the same base58
 /// allocation independently on both parser branches.
 #[inline]
-pub(crate) fn fill_recent_blockhash(events: &mut [DexEvent], transaction: &Option<Transaction>) {
-    let Some(blockhash) = transaction
-        .as_ref()
-        .and_then(|tx| tx.message.as_ref())
-        .map(|message| message.recent_blockhash.as_slice())
-        .filter(|blockhash| !blockhash.is_empty())
-    else {
+pub(crate) fn fill_transaction_context(events: &mut [DexEvent], transaction: &Option<Transaction>) {
+    let Some(message) = transaction.as_ref().and_then(|tx| tx.message.as_ref()) else {
         return;
     };
 
+    let version = yellowstone_message_version(message);
+    for event in events.iter_mut() {
+        let alt_addresses = match event {
+            DexEvent::PumpFunCreate(create) => {
+                create.transaction_version = Some(version);
+                &mut create.alt_addresses
+            }
+            DexEvent::PumpFunCreateV2(create) => {
+                create.transaction_version = Some(version);
+                &mut create.alt_addresses
+            }
+            _ => continue,
+        };
+        *alt_addresses = creation_alt_addresses(message);
+    }
+    let blockhash = &message.recent_blockhash;
+    if blockhash.is_empty() {
+        return;
+    }
     let mut metadata = events.iter_mut().filter_map(DexEvent::metadata_mut);
     let Some(first) = metadata.next() else { return };
     let encoded = bs58::encode(blockhash).into_string();
@@ -59,6 +75,21 @@ pub(crate) fn fill_recent_blockhash(events: &mut [DexEvent], transaction: &Optio
         item.recent_blockhash = Some(encoded.clone());
     }
     first.recent_blockhash = Some(encoded);
+}
+
+fn creation_alt_addresses(
+    message: &yellowstone_grpc_proto::prelude::Message,
+) -> Option<Vec<Pubkey>> {
+    let lookups = &message.address_table_lookups;
+    if lookups.is_empty() {
+        return None;
+    }
+    let mut addresses = Vec::with_capacity(lookups.len());
+    for lookup in lookups {
+        // A malformed key invalidates the list instead of exposing a partial result.
+        addresses.push(Pubkey::try_from(lookup.account_key.as_slice()).ok()?);
+    }
+    Some(addresses)
 }
 
 /// 32 字节公钥 → base58 地址字符串。
@@ -267,6 +298,53 @@ mod tests {
     use yellowstone_grpc_proto::prelude::{Message, TransactionConfig};
 
     #[test]
+    fn creation_alt_addresses_keep_order_and_reject_partial_provider_lists() {
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        for (keys, expected) in [
+            (vec![], None),
+            (
+                vec![
+                    second.to_bytes().to_vec(),
+                    first.to_bytes().to_vec(),
+                    second.to_bytes().to_vec(),
+                ],
+                Some(vec![second, first, second]),
+            ),
+            (vec![first.to_bytes().to_vec(), vec![0; 31]], None),
+        ] {
+            let tx = Some(Transaction {
+                message: Some(Message {
+                    address_table_lookups: keys
+                        .into_iter()
+                        .map(|account_key| {
+                            yellowstone_grpc_proto::prelude::MessageAddressTableLookup {
+                                account_key,
+                                ..Default::default()
+                            }
+                        })
+                        .collect(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            let mut events = [
+                DexEvent::PumpFunCreate(Default::default()),
+                DexEvent::PumpFunCreateV2(Default::default()),
+            ];
+            fill_transaction_context(&mut events, &tx);
+            for event in events {
+                let actual = match event {
+                    DexEvent::PumpFunCreate(c) => c.alt_addresses,
+                    DexEvent::PumpFunCreateV2(c) => c.alt_addresses,
+                    _ => unreachable!(),
+                };
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
     fn message_version_uses_config_before_versioned_flag() {
         let legacy = Message::default();
         assert_eq!(yellowstone_message_version(&legacy), YellowstoneMessageVersion::Legacy);
@@ -290,5 +368,42 @@ mod tests {
             yellowstone_message_version(&v1_with_inconsistent_legacy_flag),
             YellowstoneMessageVersion::V1
         );
+
+        // Creation metadata also works when the provider omits recent_blockhash.
+        for (message, version, json_version) in [
+            (legacy, YellowstoneMessageVersion::Legacy, "legacy"),
+            (v0, YellowstoneMessageVersion::V0, "v0"),
+            (v1, YellowstoneMessageVersion::V1, "v1"),
+            (v1_with_inconsistent_legacy_flag, YellowstoneMessageVersion::V1, "v1"),
+        ] {
+            let mut events = [
+                DexEvent::PumpFunCreate(Default::default()),
+                DexEvent::PumpFunCreateV2(Default::default()),
+            ];
+            fill_transaction_context(&mut events, &None);
+            fill_transaction_context(&mut events, &Some(Transaction::default()));
+            for event in &events {
+                let json = serde_json::to_value(event).unwrap();
+                assert!(json.as_object().unwrap().values().next().unwrap()["transaction_version"]
+                    .is_null());
+            }
+            fill_transaction_context(
+                &mut events,
+                &Some(Transaction { message: Some(message), ..Default::default() }),
+            );
+            for event in &events {
+                let json = serde_json::to_value(event).unwrap();
+                assert_eq!(
+                    json.as_object().unwrap().values().next().unwrap()["transaction_version"],
+                    json_version
+                );
+                assert!(event.metadata().recent_blockhash.is_none());
+            }
+            assert_eq!(
+                serde_json::from_str::<YellowstoneMessageVersion>(&format!("\"{json_version}\""))
+                    .unwrap(),
+                version
+            );
+        }
     }
 }

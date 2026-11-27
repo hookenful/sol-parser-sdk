@@ -19,10 +19,13 @@ pub mod discriminators {
     pub const CLOSE_POSITION_EVENT: [u8; 8] = [20, 145, 144, 68, 143, 142, 214, 178];
     pub const CLAIM_POSITION_FEE_EVENT: [u8; 8] = [198, 182, 183, 52, 97, 12, 49, 56];
     pub const INITIALIZE_REWARD_EVENT: [u8; 8] = [129, 91, 188, 3, 246, 52, 185, 249];
+    pub const UPDATE_REWARD_DURATION_EVENT: [u8; 8] = [149, 135, 65, 231, 129, 153, 65, 57];
+    pub const UPDATE_REWARD_FUNDER_EVENT: [u8; 8] = [76, 154, 208, 13, 40, 115, 246, 146];
     pub const FUND_REWARD_EVENT: [u8; 8] = [104, 233, 237, 122, 199, 191, 121, 85];
     pub const CLAIM_REWARD_EVENT: [u8; 8] = [218, 86, 147, 200, 235, 188, 215, 231];
     pub const UPDATE_DELEGATE_PERMISSION_EVENT: [u8; 8] = [66, 188, 75, 151, 150, 232, 87, 93];
     pub const WITHDRAW_DEAD_LIQUIDITY_REWARD_EVENT: [u8; 8] = [228, 66, 150, 195, 42, 62, 163, 13];
+    pub const WITHDRAW_INELIGIBLE_REWARD_EVENT: [u8; 8] = [248, 215, 184, 78, 31, 180, 179, 168];
     pub const CREATE_CONFIG_EVENT: [u8; 8] = [131, 207, 180, 174, 180, 73, 165, 54];
     pub const CREATE_DYNAMIC_CONFIG_EVENT: [u8; 8] = [231, 197, 13, 164, 248, 213, 133, 152];
 }
@@ -130,6 +133,30 @@ fn parse_structured_log(
             block_time_us,
             grpc_recv_us,
         ),
+        discriminators::UPDATE_REWARD_DURATION_EVENT => {
+            let pool = read_pubkey(data, 0)?;
+            let metadata = create_metadata_simple(
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                pool,
+                grpc_recv_us,
+            );
+            parse_update_reward_duration_from_data(data, metadata)
+        }
+        discriminators::UPDATE_REWARD_FUNDER_EVENT => {
+            let pool = read_pubkey(data, 0)?;
+            let metadata = create_metadata_simple(
+                signature,
+                slot,
+                tx_index,
+                block_time_us,
+                pool,
+                grpc_recv_us,
+            );
+            parse_update_reward_funder_from_data(data, metadata)
+        }
         discriminators::FUND_REWARD_EVENT => {
             parse_fund_reward_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
         }
@@ -154,6 +181,14 @@ fn parse_structured_log(
                 grpc_recv_us,
             )
         }
+        discriminators::WITHDRAW_INELIGIBLE_REWARD_EVENT => parse_withdraw_ineligible_reward_event(
+            data,
+            signature,
+            slot,
+            tx_index,
+            block_time_us,
+            grpc_recv_us,
+        ),
         discriminators::CREATE_CONFIG_EVENT => {
             parse_create_config_event(data, signature, slot, tx_index, block_time_us, grpc_recv_us)
         }
@@ -764,34 +799,10 @@ fn parse_claim_position_fee_event(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // let mut offset = 0;
-
-    // let lb_pair = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let position = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let owner = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let fee_x = read_u64_le(data, offset)?;
-    // offset += 8;
-
-    // let fee_y = read_u64_le(data, offset)?;
-
-    // let metadata =
-    //     create_metadata_simple(signature, slot, tx_index, block_time_us, lb_pair, grpc_recv_us);
-
-    // Some(DexEvent::MeteoraDammV2ClaimPositionFee(MeteoraDammV2ClaimPositionFeeEvent {
-    //     metadata,
-    //     lb_pair,
-    //     position,
-    //     owner,
-    //     fee_x,
-    //     fee_y,
-    // }))
-    None
+    let pool = read_pubkey(data, 0)?;
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    parse_claim_position_fee_from_data(data, metadata)
 }
 
 /// 解析 Initialize Reward 事件
@@ -803,34 +814,10 @@ fn parse_initialize_reward_event(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // let mut offset = 0;
-
-    // let lb_pair = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let reward_mint = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let funder = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let reward_index = read_u64_le(data, offset)?;
-    // offset += 8;
-
-    // let reward_duration = read_u64_le(data, offset)?;
-
-    // let metadata =
-    //     create_metadata_simple(signature, slot, tx_index, block_time_us, lb_pair, grpc_recv_us);
-
-    // Some(DexEvent::MeteoraDammV2InitializeReward(MeteoraDammV2InitializeRewardEvent {
-    //     metadata,
-    //     lb_pair,
-    //     reward_mint,
-    //     funder,
-    //     reward_index,
-    //     reward_duration,
-    // }))
-    None
+    let pool = read_pubkey(data, 0)?;
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    parse_initialize_reward_from_data(data, metadata)
 }
 
 /// 解析 Fund Reward 事件
@@ -842,30 +829,10 @@ fn parse_fund_reward_event(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // let mut offset = 0;
-
-    // let lb_pair = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let funder = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let reward_index = read_u64_le(data, offset)?;
-    // offset += 8;
-
-    // let amount = read_u64_le(data, offset)?;
-
-    // let metadata =
-    //     create_metadata_simple(signature, slot, tx_index, block_time_us, lb_pair, grpc_recv_us);
-
-    // Some(DexEvent::MeteoraDammV2FundReward(MeteoraDammV2FundRewardEvent {
-    //     metadata,
-    //     lb_pair,
-    //     funder,
-    //     reward_index,
-    //     amount,
-    // }))
-    None
+    let pool = read_pubkey(data, 0)?;
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    parse_fund_reward_from_data(data, metadata)
 }
 
 /// 解析 Claim Reward 事件
@@ -877,34 +844,10 @@ fn parse_claim_reward_event(
     block_time_us: Option<i64>,
     grpc_recv_us: i64,
 ) -> Option<DexEvent> {
-    // let mut offset = 0;
-
-    // let lb_pair = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let position = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let owner = read_pubkey(data, offset)?;
-    // offset += 32;
-
-    // let reward_index = read_u64_le(data, offset)?;
-    // offset += 8;
-
-    // let total_reward = read_u64_le(data, offset)?;
-
-    // let metadata =
-    //     create_metadata_simple(signature, slot, tx_index, block_time_us, lb_pair, grpc_recv_us);
-
-    // Some(DexEvent::MeteoraDammV2ClaimReward(MeteoraDammV2ClaimRewardEvent {
-    //     metadata,
-    //     lb_pair,
-    //     position,
-    //     owner,
-    //     reward_index,
-    //     total_reward,
-    // }))
-    None
+    let pool = read_pubkey(data, 0)?;
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    parse_claim_reward_from_data(data, metadata)
 }
 
 /// Parse `EvtUpdateDelegatePermission`.
@@ -970,6 +913,93 @@ pub fn parse_withdraw_dead_liquidity_reward_from_data(
         MeteoraDammV2WithdrawDeadLiquidityRewardEvent { metadata, pool, reward_mint, amount },
     ))
 }
+pub fn parse_withdraw_ineligible_reward_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
+    let mut offset = 0;
+    let pool = read_pubkey(data, offset)?;
+    offset += 32;
+    let reward_mint = read_pubkey(data, offset)?;
+    offset += 32;
+    let amount = read_u64_le(data, offset)?;
+
+    Some(DexEvent::MeteoraDammV2WithdrawIneligibleReward(
+        MeteoraDammV2WithdrawIneligibleRewardEvent { metadata, pool, reward_mint, amount },
+    ))
+}
+pub fn parse_update_reward_funder_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
+    let pool = read_pubkey(data, 0)?;
+    let reward_index = read_u8(data, 32)?;
+    let old_funder = read_pubkey(data, 33)?;
+    let new_funder = read_pubkey(data, 65)?;
+    Some(DexEvent::MeteoraDammV2UpdateRewardFunder(MeteoraDammV2UpdateRewardFunderEvent {
+        metadata,
+        pool,
+        reward_index,
+        old_funder,
+        new_funder,
+    }))
+}
+pub fn parse_update_reward_duration_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
+    let pool = read_pubkey(data, 0)?;
+    let reward_index = read_u8(data, 32)?;
+    let old_reward_duration = read_u64_le(data, 33)?;
+    let new_reward_duration = read_u64_le(data, 41)?;
+    Some(DexEvent::MeteoraDammV2UpdateRewardDuration(MeteoraDammV2UpdateRewardDurationEvent {
+        metadata,
+        pool,
+        reward_index,
+        old_reward_duration,
+        new_reward_duration,
+    }))
+}
+pub fn parse_initialize_reward_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+    let pool = read_pubkey(data, 0)?;
+    let reward_mint = read_pubkey(data, 32)?;
+    let funder = read_pubkey(data, 64)?;
+    let creator = read_pubkey(data, 96)?;
+    let reward_index = read_u8(data, 128)?;
+    let reward_duration = read_u64_le(data, 129)?;
+    Some(DexEvent::MeteoraDammV2InitializeReward(MeteoraDammV2InitializeRewardEvent {
+        metadata,
+        pool,
+        reward_mint,
+        funder,
+        creator,
+        reward_index,
+        reward_duration,
+    }))
+}
+pub fn parse_fund_reward_from_data(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
+    let pool = read_pubkey(data, 0)?;
+    let funder = read_pubkey(data, 32)?;
+    let mint_reward = read_pubkey(data, 64)?;
+    let reward_index = read_u8(data, 96)?;
+    let amount = read_u64_le(data, 97)?;
+    let transfer_fee_excluded_amount_in = read_u64_le(data, 105)?;
+    let reward_duration_end = read_u64_le(data, 113)?;
+    let pre_reward_rate = read_u128_le(data, 121)?;
+    let post_reward_rate = read_u128_le(data, 137)?;
+    Some(DexEvent::MeteoraDammV2FundReward(MeteoraDammV2FundRewardEvent {
+        metadata,
+        pool,
+        funder,
+        mint_reward,
+        reward_index,
+        amount,
+        transfer_fee_excluded_amount_in,
+        reward_duration_end,
+        pre_reward_rate,
+        post_reward_rate,
+    }))
+}
 
 fn parse_withdraw_dead_liquidity_reward_event(
     data: &[u8],
@@ -983,6 +1013,19 @@ fn parse_withdraw_dead_liquidity_reward_event(
     let metadata =
         create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
     parse_withdraw_dead_liquidity_reward_from_data(data, metadata)
+}
+fn parse_withdraw_ineligible_reward_event(
+    data: &[u8],
+    signature: Signature,
+    slot: u64,
+    tx_index: u64,
+    block_time_us: Option<i64>,
+    grpc_recv_us: i64,
+) -> Option<DexEvent> {
+    let pool = read_pubkey(data, 0)?;
+    let metadata =
+        create_metadata_simple(signature, slot, tx_index, block_time_us, pool, grpc_recv_us);
+    parse_withdraw_ineligible_reward_from_data(data, metadata)
 }
 
 fn parse_dynamic_fee_parameters(
@@ -1553,4 +1596,39 @@ mod tests {
             (config, authority, 3, 99)
         );
     }
+}
+
+pub(crate) fn parse_claim_position_fee_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
+    if data.len() < 112 {
+        return None;
+    }
+    Some(DexEvent::MeteoraDammV2ClaimPositionFee(MeteoraDammV2ClaimPositionFeeEvent {
+        metadata,
+        pool: read_pubkey(data, 0)?,
+        position: read_pubkey(data, 32)?,
+        owner: read_pubkey(data, 64)?,
+        fee_a_claimed: read_u64_le(data, 96)?,
+        fee_b_claimed: read_u64_le(data, 104)?,
+    }))
+}
+
+pub(crate) fn parse_claim_reward_from_data(
+    data: &[u8],
+    metadata: EventMetadata,
+) -> Option<DexEvent> {
+    if data.len() < 137 {
+        return None;
+    }
+    Some(DexEvent::MeteoraDammV2ClaimReward(MeteoraDammV2ClaimRewardEvent {
+        metadata,
+        pool: read_pubkey(data, 0)?,
+        position: read_pubkey(data, 32)?,
+        owner: read_pubkey(data, 64)?,
+        mint_reward: read_pubkey(data, 96)?,
+        reward_index: *data.get(128)?,
+        total_reward: read_u64_le(data, 129)?,
+    }))
 }

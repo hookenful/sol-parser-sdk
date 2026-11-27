@@ -150,6 +150,64 @@ fn find_cpmm_invoke<'a>(
     }))
 }
 
+fn find_clmm_liquidity_invoke<'a>(
+    invokes: &'a [(i32, i32)],
+    meta: &TransactionStatusMeta,
+    transaction: &Option<Transaction>,
+    position: Pubkey,
+    decrease: bool,
+) -> Option<&'a (i32, i32)> {
+    if position == Pubkey::default() {
+        return None;
+    }
+    let keys = transaction
+        .as_ref()?
+        .message
+        .as_ref()
+        .map(|msg| &msg.account_keys);
+    only_match(invokes.iter().filter(|invoke| {
+        let data = if invoke.1 >= 0 {
+            meta.inner_instructions
+                .iter()
+                .find(|g| g.index == invoke.0 as u32)
+                .and_then(|g| g.instructions.get(invoke.1 as usize))
+                .map(|ix| ix.data.as_slice())
+        } else {
+            transaction
+                .as_ref()
+                .and_then(|tx| tx.message.as_ref())
+                .and_then(|msg| msg.instructions.get(invoke.0 as usize))
+                .map(|ix| ix.data.as_slice())
+        };
+        let allowed = if decrease {
+            [
+                [58, 127, 188, 62, 79, 82, 196, 96],
+                [160, 38, 208, 111, 104, 91, 44, 1],
+            ]
+        } else {
+            [
+                [133, 29, 89, 223, 69, 238, 176, 10],
+                [46, 156, 243, 118, 13, 205, 251, 178],
+            ]
+        };
+        if !data
+            .and_then(|data| data.get(..8))
+            .is_some_and(|disc| allowed.iter().any(|allowed| disc == allowed))
+        {
+            return false;
+        }
+        get_instruction_account_getter(
+            meta,
+            transaction,
+            keys,
+            &meta.loaded_writable_addresses,
+            &meta.loaded_readonly_addresses,
+            invoke,
+        )
+        .is_some_and(|get| get(if decrease { 2 } else { 4 }) == position)
+    }))
+}
+
 fn only_match<T>(mut matches: impl Iterator<Item = T>) -> Option<T> {
     let first = matches.next()?;
     matches.next().is_none().then_some(first)
@@ -384,14 +442,17 @@ fn find_pumpfun_trade_invoke<'a>(
                 .map(|ix| ix.data.as_slice())
         };
         use crate::instr::pump::discriminators::*;
-        let (mint_idx, user_idx, is_buy) = match data.and_then(|data| data.get(..8)) {
-            Some(disc) if disc == BUY || disc == BUY_EXACT_SOL_IN => (2, 6, true),
-            Some(disc) if disc == SELL => (2, 6, false),
-            Some(disc) if disc == BUY_V2 || disc == BUY_EXACT_QUOTE_IN_V2 => (1, 13, true),
-            Some(disc) if disc == SELL_V2 => (1, 13, false),
+        let (mint_idx, user_idx, is_buy, minimum) = match data.and_then(|data| data.get(..8)) {
+            Some(disc) if disc == BUY || disc == BUY_EXACT_SOL_IN => (2, 6, true, 16),
+            Some(disc) if disc == SELL => (2, 6, false, 14),
+            Some(disc) if disc == BUY_V2 || disc == BUY_EXACT_QUOTE_IN_V2 => (1, 13, true, 27),
+            Some(disc) if disc == SELL_V2 => (1, 13, false, 26),
+            Some(disc) if disc == BUY_V3 || disc == BUY_EXACT_QUOTE_IN_V3 => (1, 8, true, 17),
+            Some(disc) if disc == SELL_V3 => (1, 8, false, 17),
             _ => return false,
         };
-        is_buy == event.is_buy
+        instruction_account_count(meta, transaction, invoke) >= minimum
+            && is_buy == event.is_buy
             && get_instruction_account_getter(
                 meta,
                 transaction,
@@ -596,7 +657,11 @@ pub(crate) fn find_pumpswap_trade_invoke<'a>(
     if pool == Pubkey::default() {
         return None;
     }
-    let keys = transaction.as_ref()?.message.as_ref().map(|msg| &msg.account_keys);
+    let keys = transaction
+        .as_ref()?
+        .message
+        .as_ref()
+        .map(|msg| &msg.account_keys);
     let mut matches = invokes.iter().filter(|invoke| {
         let data = if invoke.1 >= 0 {
             meta.inner_instructions
@@ -612,18 +677,28 @@ pub(crate) fn find_pumpswap_trade_invoke<'a>(
                 .map(|ix| ix.data.as_slice())
         };
         use crate::instr::pump_amm::discriminators::{
-            BOOST_BUY_AND_BURN, BUY, BUY_EXACT_QUOTE_IN, SELL,
+            BOOST_BUY_AND_BURN, BUY, BUY_EXACT_QUOTE_IN, BUY_EXACT_QUOTE_IN_V2, BUY_V2, SELL,
+            SELL_V2,
         };
         let direction_matches = match data.and_then(|data| data.get(..8)) {
             Some(disc) if buy => {
-                disc == BUY || disc == BUY_EXACT_QUOTE_IN || disc == BOOST_BUY_AND_BURN
+                disc == BUY
+                    || disc == BUY_EXACT_QUOTE_IN
+                    || disc == BOOST_BUY_AND_BURN
+                    || disc == BUY_V2
+                    || disc == BUY_EXACT_QUOTE_IN_V2
             }
-            Some(disc) => disc == SELL,
+            Some(disc) => disc == SELL || disc == SELL_V2,
             None => false,
         };
         let boost =
             buy && data.and_then(|data| data.get(..8)) == Some(BOOST_BUY_AND_BURN.as_slice());
-        let minimum_count = if boost {
+        let compact = data
+            .and_then(|d| d.get(..8))
+            .is_some_and(|disc| disc == BUY_V2 || disc == BUY_EXACT_QUOTE_IN_V2 || disc == SELL_V2);
+        let minimum_count = if compact {
+            17
+        } else if boost {
             13
         } else if buy {
             23
@@ -1005,28 +1080,28 @@ fn fill_accounts_with_lookup<L: InvokeLookup + ?Sized>(
             );
         }
         DexEvent::RaydiumClmmIncreaseLiquidity(e) => {
-            fill_event_accounts!(
-                e,
-                meta,
-                transaction,
-                program_invokes,
-                &RAYDIUM_CLMM_PROGRAM,
-                |get: &AccountGetter<'_>| {
-                    account_fillers::raydium::fill_clmm_increase_liquidity_accounts(e, get);
+            if e.position_nft_mint != Pubkey::default() {
+                e.personal_position = Pubkey::find_program_address(&[b"position", e.position_nft_mint.as_ref()], &RAYDIUM_CLMM_PROGRAM).0;
+            }
+            if let Some(invokes) = program_invokes.get_invokes(&RAYDIUM_CLMM_PROGRAM) {
+                if let Some(invoke) = find_clmm_liquidity_invoke(invokes, meta, transaction, e.personal_position, false) {
+                    fill_event_accounts_with_invoke!(e, meta, transaction, invoke, |get: &AccountGetter<'_>| {
+                        account_fillers::raydium::fill_clmm_increase_liquidity_accounts(e, get);
+                    });
                 }
-            );
+            }
         }
         DexEvent::RaydiumClmmDecreaseLiquidity(e) => {
-            fill_event_accounts!(
-                e,
-                meta,
-                transaction,
-                program_invokes,
-                &RAYDIUM_CLMM_PROGRAM,
-                |get: &AccountGetter<'_>| {
-                    account_fillers::raydium::fill_clmm_decrease_liquidity_accounts(e, get);
+            if e.position_nft_mint != Pubkey::default() {
+                e.personal_position = Pubkey::find_program_address(&[b"position", e.position_nft_mint.as_ref()], &RAYDIUM_CLMM_PROGRAM).0;
+            }
+            if let Some(invokes) = program_invokes.get_invokes(&RAYDIUM_CLMM_PROGRAM) {
+                if let Some(invoke) = find_clmm_liquidity_invoke(invokes, meta, transaction, e.personal_position, true) {
+                    fill_event_accounts_with_invoke!(e, meta, transaction, invoke, |get: &AccountGetter<'_>| {
+                        account_fillers::raydium::fill_clmm_decrease_liquidity_accounts(e, get);
+                    });
                 }
-            );
+            }
         }
 
         // Raydium CPMM
